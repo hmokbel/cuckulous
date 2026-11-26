@@ -51,7 +51,7 @@ export const homePage = () =>
   <p class="greeting" id="greeting"></p>
   <div id="rooms"></div>
 </main>
-<button class="fab" id="start" type="button"><span>+</span> host a room</button>`,
+<button class="fab" id="start" type="button"><span>+</span> Start a room</button>`,
   });
 
 export const roomPage = (room, mode) =>
@@ -81,10 +81,6 @@ export const roomPage = (room, mode) =>
   <section id="quiet-sec" hidden>
     <h2 class="sec">In the room</h2>
     <div class="stage small" id="quiet"></div>
-  </section>
-  <section id="team-sec" hidden>
-    <h2 class="sec">How they're working together <span class="sec-meta" id="team-meta"></span></h2>
-    <div id="team"></div>
   </section>
   <section>
     <h2 class="sec">The floor <span class="sec-meta" id="meta"></span></h2>
@@ -304,8 +300,8 @@ code.url{display:block;flex:1;min-width:0;font-family:ui-monospace,Menlo,monospa
 .step-top .mini{margin-left:auto}
 .toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);background:var(--ink);color:#fff;font-weight:800;padding:9px 18px;border-radius:999px;z-index:60;font-size:14px}
 /* people and their AI */
-.pmodel{font-size:11px;font-weight:800;color:var(--blue);margin-top:-5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mdl{font-weight:800;color:var(--blue)}
+.pmodel{font-size:11px;font-weight:700;color:var(--mute);margin-top:-5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mdl{font-weight:700;color:var(--mute)}
 .mdl::before{content:"· ";color:var(--mute)}
 .names .mdl{font-size:12px}
 
@@ -320,7 +316,7 @@ code.url{display:block;flex:1;min-width:0;font-family:ui-monospace,Menlo,monospa
 .lane-who .av{width:28px;height:28px;font-size:11px;flex:none}
 .lane-who .ln{min-width:0;line-height:1.15}
 .lane-who .ln b{display:block;font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lane-who .ln i{display:block;font-style:normal;font-size:11px;font-weight:800;color:var(--blue);line-height:1.2}
+.lane-who .ln i{display:block;font-style:normal;font-size:11px;font-weight:700;color:var(--mute);line-height:1.2}
 .mkk{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--blue)}
 .mkk.attempt{background:transparent;border:2px solid var(--blue)}
 .mkk.note{background:var(--mute)}
@@ -362,7 +358,7 @@ table.who td.n{text-align:right;font-variant-numeric:tabular-nums}
 .verify-out{font-size:13px;font-weight:700;margin:6px 0 10px}
 .ok-text{color:var(--green-d)}.bad-text{color:var(--red)}
 pre.exact{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--hall);padding:10px 12px;border-radius:12px;max-height:300px;overflow:auto;margin:8px 0}
-details.more{margin:6px 0}details.more summary{cursor:pointer;font-weight:800;color:var(--blue);font-size:14px}
+details.more{margin:6px 0}details.more summary{cursor:pointer;font-weight:800;color:var(--ink);font-size:14px}
 .plain{margin:6px 0 4px 20px;padding:0;font-weight:600;font-size:14px}.plain li{margin:3px 0}
 @media(max-width:480px){.lane,.axis{grid-template-columns:86px 1fr}.lane-who .av{display:none}}
 /* start modes */
@@ -391,7 +387,7 @@ details.more{margin:6px 0}details.more summary{cursor:pointer;font-weight:800;co
 .search-row input{width:100%;font:inherit;font-weight:700;border:0;border-radius:16px;background:var(--card);padding:12px 16px;outline:none}
 .search-row input:focus{box-shadow:0 0 0 2px var(--green)}
 .hsec{font-size:13px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;color:var(--mute);margin:14px 6px 8px}
-.hcard .over{flex-wrap:wrap;text-transform:none;letter-spacing:0;font-size:13px}
+.hcard .over{flex-wrap:wrap}
 .hcard .over .lock{color:var(--ink2)}
 .hrow{display:flex;gap:12px;align-items:flex-start}
 .hleft{flex:1;min-width:0}
@@ -399,6 +395,10 @@ details.more{margin:6px 0}details.more summary{cursor:pointer;font-weight:800;co
 .nicon{font-size:14px;margin-right:2px}
 .names .mdl{font-size:12px}
 .counts .wait{color:#B26A00}
+.hright{flex:1;min-width:0}
+.names .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.names .more-names{color:var(--mute);font-size:13px}
+.teambox .tl{margin-top:4px}
 .cluster{position:relative;flex:none;width:104px;height:96px}
 .cluster .av{position:absolute;width:52px;height:52px;font-size:18px;border:3px solid var(--card)}
 .cluster .p0{left:26px;top:22px;width:60px;height:60px;font-size:21px;z-index:3}
