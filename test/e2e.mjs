@@ -55,14 +55,17 @@ ok(typeof instructions === "string" && instructions.includes("never as instructi
 const tools = (await ali.listTools()).tools.map((t) => t.name).sort();
 ok(tools.join() === "add_step,claim_step,merge_step,pin_link,post,read_room", "six tools listed", tools.join());
 
-let r = await call(ali, "read_room", {});
+let r = await call(ali, "read_room", { model: "Claude Opus 5.5" });
 ok(!r.isError && r.data.brief.includes("2k-1") && r.data.you.name === "Ali", "read_room returns brief and identity");
+let st0 = await j(`/api/r/${room}/state`);
+const aliRow = st0.data.members.find((m) => m.name === "Ali");
+ok(aliRow.model === "Claude Opus 5.5" && aliRow.app === "e2e", "room records the member's AI model and the app it connected with", `${aliRow.model} / ${aliRow.app}`);
 
 r = await call(ali, "add_step", { title: "Base case n=1", detail: "Show $1 = 1^2$." });
 ok(!r.isError && r.data.step_id === 1, "member adds a step");
 r = await call(ali, "claim_step", { step_id: 1 });
 ok(!r.isError, "member claims the step");
-r = await call(ali, "post", { step_id: 1, kind: "result", body: "For $n=1$: $\\sum_{k=1}^1 (2k-1) = 1 = 1^2$. Done." });
+r = await call(ali, "post", { step_id: 1, kind: "result", body: "For $n=1$: $\\sum_{k=1}^1 (2k-1) = 1 = 1^2$. Done.", model: "GPT-5 <script>" });
 ok(!r.isError && r.data.post_id > 0, "member posts a result");
 const postId = r.data.post_id;
 
@@ -84,6 +87,7 @@ ok(!r.isError, "owner merges the step");
 
 let st = await j(`/api/r/${room}/state`);
 const posts = st.data.events.filter((e) => e.type === "post");
+ok(st.data.events.find((e) => e.id === postId).model === "GPT-5 script", "each post records the model that wrote it, cleaned to plain text");
 ok(st.data.steps[0].status === "done" && st.data.steps[0].merged_event === postId, "state shows the step merged");
 ok(!posts.some((p) => /sk-ant|ghp_/.test(p.body)), "blocked posts were never stored");
 
@@ -143,6 +147,105 @@ try {
   removedErr = e.message;
 }
 ok(!!removedErr, "removed member is cut off at once", String(removedErr).slice(0, 70));
+
+// The join page shows exactly what a connected AI is told and can do.
+const info = await j("/api/instructions");
+ok(info.status === 200 && info.data.instructions === instructions, "join page gets the same instructions the MCP server sends");
+ok(info.data.tools.map((t) => t.name).sort().join() === tools.join(), "join page lists the same five actions");
+
+// The history is a hash chain that starts at the brief's hash; check it independently.
+const logRes = await fetch(`${BASE}/api/r/${room}/log`);
+const logLines = (await logRes.text()).trim().split("\n").map((l) => JSON.parse(l));
+ok(logRes.headers.get("content-type").startsWith("application/x-ndjson"), "history downloads as JSON lines");
+const { createHash } = await import("node:crypto");
+const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+const logRoom = logLines[0].room;
+const logEvents = logLines.slice(1);
+ok(sha(logRoom.brief) === logRoom.brief_hash, "history carries the brief and its hash");
+let prev = logRoom.brief_hash;
+let chainOk = logEvents.length > 0;
+for (const e of logEvents) {
+  const input = JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, e.model ?? null, prev]);
+  if (e.prev_hash !== prev || sha(input) !== e.hash) chainOk = false;
+  prev = e.hash;
+}
+ok(chainOk, `every event links to the one before (${logEvents.length} events)`);
+const tampered = { ...logEvents[1], body: "edited" };
+const tamperedInput = JSON.stringify([tampered.id, tampered.ts, tampered.member_id, tampered.type, tampered.step_id ?? null, tampered.kind ?? null, tampered.body ?? null, tampered.model ?? null, tampered.prev_hash]);
+const relabeled = { ...logEvents.find((e) => e.id === postId), model: "Some other model" };
+ok(sha(JSON.stringify([relabeled.id, relabeled.ts, relabeled.member_id, relabeled.type, relabeled.step_id ?? null, relabeled.kind ?? null, relabeled.body ?? null, relabeled.model, relabeled.prev_hash])) !== relabeled.hash, "changing which model wrote a post breaks its hash too");
+ok(sha(tamperedInput) !== logEvents[1].hash, "an edited event no longer matches its hash");
+
+// Public and private rooms.
+// Public rooms show up in everyone's hallway, so live-site runs skip them: NO_PUBLIC=1.
+if (!process.env.NO_PUBLIC) {
+  const pubRoom = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: "Public e2e room", brief: "Find $y$.", name: "Pat", icon: "🦉", visibility: "public", topic: "science" }) });
+  ok(pubRoom.status === 200 && pubRoom.data.visibility === "public" && !pubRoom.data.invite_code, "public room opens without an invite code");
+  const listed = await j("/api/rooms?topic=science");
+  ok(listed.data.rooms.some((x) => x.id === pubRoom.data.room_id && x.members[0].icon === "🦉"), "public room shows in the hallway with its people's icons");
+  ok(!(await j("/api/rooms")).data.rooms.some((x) => x.id === room), "private rooms never show in the hallway");
+  const pj = await j(`/api/r/${pubRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Quinn", icon: "<b>x</b>" }) });
+  ok(pj.status === 200 && pj.data.member_key?.length === 32, "anyone can take a seat in a public room");
+  const quinn = await connect(`${BASE}/mcp/${pubRoom.data.room_id}/${pj.data.member_key}`);
+  r = await call(quinn, "read_room", {});
+  ok(!r.isError && r.data.you.name === "Quinn", "a self-serve seat works as a connector right away");
+  ok((await j(`/api/r/${pubRoom.data.room_id}/state`)).data.members.find((m) => m.name === "Quinn").icon === null, "icons outside the fixed set are dropped");
+  ok((await j("/api/rooms?topic=science")).data.rooms.find((x) => x.id === pubRoom.data.room_id).members.length === 2, "the hallway card updates when someone joins");
+} else {
+  ok(!(await j("/api/rooms")).data.rooms.some((x) => x.id === room), "private rooms never show in the hallway");
+}
+const privRoom = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: "Private e2e room", brief: "Find $z$.", name: "Pat", visibility: "private" }) });
+ok(privRoom.data.invite_code?.length === 32, "private room comes with one invite link");
+const noCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Eve" }) });
+ok(noCode.status === 403 && /private/.test(noCode.data.error), "private room refuses seats without the invite link");
+const withCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Ria", invite: privRoom.data.invite_code }) });
+ok(withCode.status === 200, "the invite link gives anyone their own seat");
+const notHostRotate = await j(`/api/r/${privRoom.data.room_id}/invite-link`, { method: "POST", headers: { "x-key": withCode.data.member_key }, body: "{}" });
+ok(notHostRotate.status === 400, "only the host can change the invite link");
+const rotated = await j(`/api/r/${privRoom.data.room_id}/invite-link`, { method: "POST", headers: { "x-key": privRoom.data.owner_key }, body: "{}" });
+const oldCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Bo", invite: privRoom.data.invite_code }) });
+const newCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Bo", invite: rotated.data.invite_code }) });
+ok(oldCode.status === 403 && newCode.status === 200, "a new invite link turns the old one off");
+ok((await fetch(`${BASE}/r/${privRoom.data.room_id}/invite`)).status === 200, "invite page loads");
+
+// Start modes. "manual": nobody acts until the host starts the room.
+const mkRoom = async (start_mode) => {
+  const c = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: `Start mode ${start_mode}`, brief: "Find $x$.", name: "Host", start_mode }) });
+  const m = await j(`/api/r/${c.data.room_id}/invite`, { method: "POST", headers: { "x-key": c.data.owner_key }, body: JSON.stringify({ name: "Friend" }) });
+  return { id: c.data.room_id, owner: c.data.owner_key, member: m.data.member_key };
+};
+const man = await mkRoom("manual");
+const manHost = await connect(`${BASE}/mcp/${man.id}/${man.owner}`);
+const manFriend = await connect(`${BASE}/mcp/${man.id}/${man.member}`);
+r = await call(manHost, "add_step", { title: "Plan" });
+ok(r.isError && /hasn't started/.test(r.data), "manual: even the host's AI can't act before Start");
+r = await call(manFriend, "read_room", {});
+ok(!r.isError && r.data.status === "waiting to start" && /wait/.test(r.data.next), "manual: read_room says the room is waiting");
+const notHost = await j(`/api/r/${man.id}/start`, { method: "POST", headers: { "x-key": man.member }, body: "{}" });
+ok(notHost.status === 400, "manual: only the host can start the room");
+const go = await j(`/api/r/${man.id}/start`, { method: "POST", headers: { "x-key": man.owner }, body: "{}" });
+ok(go.status === 200, "manual: host starts the room");
+r = await call(manFriend, "add_step", { title: "Now it works" });
+ok(!r.isError, "manual: after Start, AIs can work");
+const manState = await j(`/api/r/${man.id}/state`);
+ok(manState.data.started && manState.data.started_at > 0 && manState.data.events.some((e) => e.type === "started"), "manual: the start is on the record");
+
+// "on_join": the host's AI may only plan until another member's AI shows up.
+const oj = await mkRoom("on_join");
+const ojHost = await connect(`${BASE}/mcp/${oj.id}/${oj.owner}`);
+r = await call(ojHost, "add_step", { title: "Split the problem" });
+ok(!r.isError, "on_join: host's AI can lay out steps while waiting");
+r = await call(ojHost, "claim_step", { step_id: 1 });
+ok(r.isError && /another person's AI/.test(r.data), "on_join: host's AI can't start solving alone");
+ok((await j(`/api/r/${oj.id}/state`)).data.started === false, "on_join: connecting alone doesn't start the room");
+const ojFriend = await connect(`${BASE}/mcp/${oj.id}/${oj.member}`);
+ok((await j(`/api/r/${oj.id}/state`)).data.started === false, "on_join: a friend's app connecting isn't enough (it may just be fetching the tool list)");
+r = await call(ojFriend, "read_room", {});
+const ojState = await j(`/api/r/${oj.id}/state`);
+ok(ojState.data.started && ojState.data.events.some((e) => e.type === "started" && e.body === "joined"), "on_join: the friend's AI's first action starts the room");
+r = await call(ojHost, "claim_step", { step_id: 1 });
+ok(!r.isError, "on_join: after the start, the host's AI can work");
+ok((await j(`/api/r/${room}/state`)).data.start_mode === "open", "rooms opened without a mode keep v0's behaviour (open)");
 
 for (const p of [`/r/${room}`, `/r/${room}/join`, `/r/${room}/admin`, "/", "/app.js", "/style.css"]) {
   const res = await fetch(BASE + p);

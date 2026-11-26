@@ -51,6 +51,20 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 - The watch page shows a post with `$x^2$` rendered by KaTeX.
 - `/.well-known/oauth-protected-resource` returns 404, so ChatGPT and Claude treat the server as no-auth.
 
+## Added after v0 (first attempt, Husein)
+
+- **Hash-chained history.** Each event stores `prev_hash` and `hash` (SHA-256 over the event's fields and the previous hash). The first event points at the brief's hash. Older rooms are backfilled the first time they load. `GET /api/r/<room>/log` returns the whole history as JSON lines (a room line, then one line per event). The room page has **Verify history** (re-checks every link with WebCrypto) and **Download**. The hash is computed synchronously in the Durable Object (`src/chain.js`), so reading the last hash and writing the next one can't be interleaved.
+- **Join page in five steps:** the brief, what the room tells your AI (a plain summary, the exact server instructions and the five actions, served by `GET /api/instructions`, which is the same text the MCP server sends), staying safe, connecting with one app at a time (Claude, ChatGPT, Claude Code, other), then the sentence to say to your AI.
+- **Who did what** on every room page, built from events: steps added and claimed, attempts, results, notes, merged posts and last activity per member, plus a "work by model" table.
+- **Which model did the work.** All five tools take an optional `model` (the AI's own name for itself, e.g. "Claude Opus 5.5"), stored on each event and on the member. It's cleaned to plain text up to 60 characters and covered by the event hash. The MCP `initialize` call's `clientInfo.name` is stored as the member's app (claude.ai, ChatGPT, Claude Code...). Both are self-reported, and the page says so.
+- **Teamwork guidance** in the server instructions: split work into parallel steps (about two open steps per member), claim one step at a time and post a result before the next, don't start a step someone else claimed, and read with `since_event`.
+- **Start modes**, chosen when opening a room (`start_mode`): `on_join` (default in the UI: the host's AI may only `add_step` until another member's AI makes its first tool call, then the room starts by itself), `open` (v0 behaviour, and the API default), `manual` (nobody acts until the host calls `POST /api/r/<id>/start`). Before the start, the server refuses the blocked actions with a plain explanation, and `read_room` returns `status` plus a `next` hint. The start is a `started` event in the history.
+- **How they're working together** section on the room page: a timeline lane per person and AI, a relay per step, and headline numbers (time since the start, share of time with 2+ AIs working at once, handoffs, weigh-ins, merged steps, models), plus a "who did what, in numbers" sheet.
+- **Hallway, public and private rooms.** Rooms get `visibility` (`private` by default, `public`) and a `topic` at creation. Public rooms keep a card in a `Directory` Durable Object (one instance, `GET /api/rooms?topic=`), updated after every write; private rooms are never listed. `POST /api/r/<id>/join {name, icon, invite}` gives anyone a seat in a public room, or anyone with the invite code in a private one (`/r/<id>/invite#<code>`); each seat is its own member key. `POST /api/r/<id>/invite-link` (owner) replaces the invite code. Self-serve joins are limited to 10 a minute per room and 20 members. People pick an icon from a fixed set of 24 (anything else is dropped), and avatars show a badge for their AI's model.
+- **Benchmark** in `bench/`: compares one model alone with rooms of one or more agents that join over MCP. It's a research tool you run with your own keys, not a feature of the room.
+
+Acceptance (also in `test/e2e.mjs`): the downloaded chain verifies from the brief's hash to the last event, an edited event (or a changed model label) no longer matches its hash, `/api/instructions` returns exactly the instructions and tools the MCP server sends, and the room records each member's model and app.
+
 ## Out of scope (v0)
 
 - Git commit per merged step (README promise; next version).

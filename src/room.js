@@ -2,6 +2,7 @@
 // watch page and the history are built from the same log.
 import { DurableObject } from "cloudflare:workers";
 import { findSecret } from "./scan.js";
+import { chainHash } from "./chain.js";
 
 export const LIMITS = {
   title: 200,
@@ -14,19 +15,40 @@ export const LIMITS = {
   links: 30,
   linkTitle: 80,
   url: 500,
+  joinsPerMinute: 10,
 };
+
+// What the hallway files a room under.
+export const TOPICS = ["math", "code", "science", "writing", "other"];
+// The icon set people pick from. Kept to a fixed list so an icon is never free text.
+export const ICONS = ["🦊", "🐸", "🐙", "🦉", "🐢", "🐝", "🦄", "🐳", "🦁", "🐼", "🐧", "🦖", "🐨", "🦋", "🐞", "🦩", "🐯", "🐰", "🦔", "🐌", "🐬", "🦜", "🐿️", "🦭"];
+export const cleanIcon = (v) => (ICONS.includes(v) ? v : null);
 export const POST_KINDS = ["attempt", "result", "question", "note"];
+// How a room starts, chosen by the host when opening it:
+//   on_join  the room starts by itself the first time another member's AI uses the room;
+//            until then the host's AI may only add steps (plan), not solve
+//   manual   nobody acts until the host presses Start (fairest for timing)
+//   open     work starts right away, even with one AI (v0 behaviour, and the default for older rooms)
+export const START_MODES = ["on_join", "manual", "open"];
 
 const err = (error) => ({ error });
+
+// The AI model a member's agent says it is ("Claude Opus 5.5", "GPT-5"), or the
+// app that connected. Short, plain text only; anything else is dropped.
+export const cleanLabel = (v) => {
+  const t = String(v ?? "").replace(/[^\w .:()\/+-]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return t || null;
+};
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.writes = new Map(); // member id -> recent write timestamps
+    this.joins = []; // recent self-serve join timestamps
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)");
     this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, key_hash TEXT UNIQUE, role TEXT, created_at INTEGER, removed_at INTEGER)",
+      "CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, key_hash TEXT UNIQUE, role TEXT, created_at INTEGER, removed_at INTEGER, app TEXT, model TEXT)",
     );
     this.sql.exec(
       "CREATE TABLE IF NOT EXISTS steps(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, detail TEXT, created_by INTEGER, created_at INTEGER, status TEXT, claimed_by INTEGER, merged_event INTEGER)",
@@ -35,8 +57,27 @@ export class Room extends DurableObject {
       "CREATE TABLE IF NOT EXISTS links(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT, added_by INTEGER, created_at INTEGER, removed_at INTEGER)",
     );
     this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT)",
+      "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT, model TEXT, prev_hash TEXT, hash TEXT)",
     );
+    // Rooms created before these columns existed get them, plus a hash backfill.
+    for (const [table, col] of [["events", "model"], ["events", "prev_hash"], ["events", "hash"], ["members", "app"], ["members", "model"], ["members", "icon"]]) {
+      try {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+      } catch {
+        // column already there
+      }
+    }
+    if (this.sql.exec("SELECT COUNT(*) AS n FROM events WHERE hash IS NULL").one().n) this.rechain();
+  }
+
+  // Recomputes every hash in order. Only used to backfill older rooms.
+  rechain() {
+    let prev = this.meta("brief_hash") || "";
+    for (const e of this.sql.exec("SELECT * FROM events ORDER BY id").toArray()) {
+      const hash = chainHash(e, prev);
+      this.sql.exec("UPDATE events SET prev_hash = ?, hash = ? WHERE id = ?", prev, hash, e.id);
+      prev = hash;
+    }
   }
 
   // ---- helpers ----
@@ -46,6 +87,31 @@ export class Room extends DurableObject {
   }
   exists() {
     return this.meta("title") !== null;
+  }
+  startMode() {
+    return this.meta("start_mode") || "open";
+  }
+  started() {
+    return this.startMode() === "open" || this.meta("started_at") !== null;
+  }
+  // Refuses work before the start. In on_join the host's AI may still add steps.
+  beforeStart(member, action) {
+    if (this.started()) return null;
+    if (action === "add_step" && this.startMode() === "on_join" && member.role === "owner") return null;
+    if (this.startMode() === "on_join")
+      return err("The room starts as soon as another person's AI joins (or when your human presses Start). Until then you can only add steps to plan the work.");
+    return err("The room hasn't started yet. The host starts it once everyone is here. Tell your human you're ready, and wait until they say it has started.");
+  }
+
+  // Called before every tool call. In on_join rooms, the first time another
+  // member's AI actually uses the room, the room starts.
+  async arrived(keyHash) {
+    if (this.started() || this.startMode() !== "on_join") return;
+    const m = this.member(keyHash);
+    if (!m || m.role === "owner") return;
+    this.sql.exec("INSERT INTO meta(k, v) VALUES ('started_at', ?)", String(Date.now()));
+    this.event(m.id, "started", null, null, "joined");
+    await this.publish();
   }
   member(keyHash) {
     return (
@@ -57,17 +123,27 @@ export class Room extends DurableObject {
   step(id) {
     return this.sql.exec("SELECT * FROM steps WHERE id = ?", id).toArray()[0] || null;
   }
-  event(memberId, type, stepId = null, kind = null, body = null) {
+  // Appends to the log. Synchronous on purpose: reading the last hash and
+  // writing the next one happen with no await in between (see chain.js).
+  event(memberId, type, stepId = null, kind = null, body = null, model = null) {
+    const last = this.sql.exec("SELECT hash FROM events ORDER BY id DESC LIMIT 1").toArray()[0];
+    const prev = last ? last.hash : this.meta("brief_hash") || "";
+    const ts = Date.now();
     this.sql.exec(
-      "INSERT INTO events(ts, member_id, type, step_id, kind, body) VALUES (?, ?, ?, ?, ?, ?)",
-      Date.now(),
+      "INSERT INTO events(ts, member_id, type, step_id, kind, body, model, prev_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ts,
       memberId,
       type,
       stepId,
       kind,
       body,
+      model,
+      prev,
     );
-    return this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
+    const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
+    const hash = chainHash({ id, ts, member_id: memberId, type, step_id: stepId, kind, body, model }, prev);
+    this.sql.exec("UPDATE events SET hash = ? WHERE id = ?", hash, id);
+    return id;
   }
   // Checks membership, rate limit and room size for any write.
   writer(keyHash) {
@@ -85,8 +161,22 @@ export class Room extends DurableObject {
     return { member: m };
   }
 
+  // Remembers the latest model a member's agent reported, and the app it
+  // connected with. Shown next to the member's name; not part of the work.
+  noteModel(keyHash, model) {
+    const m = this.member(keyHash);
+    const label = cleanLabel(model);
+    if (m && label && label !== m.model) this.sql.exec("UPDATE members SET model = ? WHERE id = ?", label, m.id);
+    return label;
+  }
+  noteApp(keyHash, app) {
+    const m = this.member(keyHash);
+    const label = cleanLabel(app);
+    if (m && label && label !== m.app) this.sql.exec("UPDATE members SET app = ? WHERE id = ?", label, m.id);
+  }
+
   // ---- room lifecycle ----
-  async create({ title, brief, briefHash, ownerName, ownerKeyHash }) {
+  async create({ roomId, title, brief, briefHash, ownerName, ownerKeyHash, ownerIcon = null, startMode = "open", visibility = "private", topic = "other", inviteHash = null }) {
     if (this.exists()) return err("Room already exists.");
     const now = Date.now();
     for (const [k, v] of [
@@ -94,16 +184,79 @@ export class Room extends DurableObject {
       ["brief", brief],
       ["brief_hash", briefHash],
       ["created_at", String(now)],
+      ["start_mode", START_MODES.includes(startMode) ? startMode : "open"],
+      ["room_id", roomId || ""],
+      ["visibility", visibility === "public" ? "public" : "private"],
+      ["topic", TOPICS.includes(topic) ? topic : "other"],
+      ["invite_hash", inviteHash || ""],
     ])
       this.sql.exec("INSERT INTO meta(k, v) VALUES (?, ?)", k, v);
     this.sql.exec(
-      "INSERT INTO members(name, key_hash, role, created_at) VALUES (?, ?, 'owner', ?)",
+      "INSERT INTO members(name, key_hash, role, created_at, icon) VALUES (?, ?, 'owner', ?, ?)",
       ownerName,
       ownerKeyHash,
       now,
+      cleanIcon(ownerIcon),
     );
     const ownerId = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
     this.event(ownerId, "created", null, null, title);
+    await this.publish();
+    return { ok: true };
+  }
+
+  visibility() {
+    return this.meta("visibility") || "private"; // rooms from before this setting stay unlisted
+  }
+
+  // Public rooms keep a small card in the hallway directory up to date.
+  async publish() {
+    if (this.visibility() !== "public" || !this.env.DIRECTORY || !this.meta("room_id")) return;
+    try {
+      const dir = this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("hallway"));
+      await dir.upsert(this.meta("room_id"), await this.summary());
+    } catch {
+      // the directory is a convenience; the room itself never depends on it
+    }
+  }
+
+  // Self-serve join: anyone for a public room, anyone with the invite link for a
+  // private one. Each person still gets their own key, so the owner can remove them.
+  async join({ name, icon, memberKeyHash, inviteHash }) {
+    if (!this.exists()) return err("This room does not exist.");
+    if (this.visibility() !== "public") {
+      const want = this.meta("invite_hash");
+      if (!inviteHash) return err("This room is private. You need the invite link from the host.");
+      if (!want || inviteHash !== want) return err("This invite link isn't valid anymore. Ask the host for a new one.");
+    }
+    const now = Date.now();
+    this.joins = this.joins.filter((t) => now - t < 60_000);
+    if (this.joins.length >= LIMITS.joinsPerMinute) return err("Lots of people are joining right now. Try again in a minute.");
+    const active = this.sql.exec("SELECT COUNT(*) AS n FROM members WHERE removed_at IS NULL").one().n;
+    if (active >= LIMITS.members) return err(`This room is full (${LIMITS.members} people).`);
+    const count = this.sql.exec("SELECT COUNT(*) AS n FROM events").one().n;
+    if (count >= LIMITS.events) return err("This room is full. Start a new room to continue.");
+    const secret = findSecret(name);
+    if (secret) return err("That name looks like a secret. Pick another.");
+    this.joins.push(now);
+    this.sql.exec(
+      "INSERT INTO members(name, key_hash, role, created_at, icon) VALUES (?, ?, 'member', ?, ?)",
+      name,
+      memberKeyHash,
+      now,
+      cleanIcon(icon),
+    );
+    const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
+    this.event(id, "joined");
+    await this.publish();
+    return { ok: true, id };
+  }
+
+  // A new invite link for a private room. The old one stops working.
+  async rotateInvite(ownerKeyHash, inviteHash) {
+    const w = this.writer(ownerKeyHash);
+    if (w.error) return w;
+    if (w.member.role !== "owner") return err("Only the room owner can change the invite link.");
+    this.sql.exec("INSERT INTO meta(k, v) VALUES ('invite_hash', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", inviteHash);
     return { ok: true };
   }
 
@@ -130,6 +283,7 @@ export class Room extends DurableObject {
     );
     const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
     this.event(w.member.id, "invited", null, null, String(id));
+    await this.publish();
     return { ok: true, id };
   }
 
@@ -146,13 +300,27 @@ export class Room extends DurableObject {
       memberId,
     );
     this.event(w.member.id, "removed", null, null, String(memberId));
+    await this.publish();
+    return { ok: true };
+  }
+
+  async start(ownerKeyHash) {
+    const w = this.writer(ownerKeyHash);
+    if (w.error) return w;
+    if (w.member.role !== "owner") return err("Only the room owner can start the room.");
+    if (this.started()) return err("The room has already started.");
+    this.sql.exec("INSERT INTO meta(k, v) VALUES ('started_at', ?)", String(Date.now()));
+    this.event(w.member.id, "started");
+    await this.publish();
     return { ok: true };
   }
 
   // ---- the work ----
-  async addStep(keyHash, title, detail) {
+  async addStep(keyHash, title, detail, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
+    const wait = this.beforeStart(w.member, "add_step");
+    if (wait) return wait;
     title = String(title || "").trim();
     detail = String(detail || "").trim();
     if (!title) return err("A step needs a title.");
@@ -168,13 +336,16 @@ export class Room extends DurableObject {
       Date.now(),
     );
     const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
-    this.event(w.member.id, "step_added", id, null, title);
+    this.event(w.member.id, "step_added", id, null, title, this.noteModel(keyHash, model));
+    await this.publish();
     return { ok: true, step_id: id };
   }
 
-  async claim(keyHash, stepId) {
+  async claim(keyHash, stepId, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
+    const wait = this.beforeStart(w.member, "claim_step");
+    if (wait) return wait;
     const s = this.step(stepId);
     if (!s) return err("No such step.");
     if (s.status === "done") return err("That step is already merged.");
@@ -185,13 +356,16 @@ export class Room extends DurableObject {
       w.member.id,
       stepId,
     );
-    this.event(w.member.id, "claimed", stepId);
+    this.event(w.member.id, "claimed", stepId, null, null, this.noteModel(keyHash, model));
+    await this.publish();
     return { ok: true };
   }
 
-  async post(keyHash, stepId, kind, body) {
+  async post(keyHash, stepId, kind, body, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
+    const wait = this.beforeStart(w.member, "post");
+    if (wait) return wait;
     if (!POST_KINDS.includes(kind)) return err(`kind must be one of: ${POST_KINDS.join(", ")}.`);
     body = String(body || "").trim();
     if (!body) return err("Empty post.");
@@ -199,7 +373,8 @@ export class Room extends DurableObject {
     if (stepId != null && !this.step(stepId)) return err("No such step.");
     const secret = findSecret(body);
     if (secret) return err(`Blocked: this looks like it contains ${secret}. Nothing was saved.`);
-    const id = this.event(w.member.id, "post", stepId ?? null, kind, body);
+    const id = this.event(w.member.id, "post", stepId ?? null, kind, body, this.noteModel(keyHash, model));
+    await this.publish();
     return { ok: true, post_id: id };
   }
 
@@ -213,10 +388,11 @@ export class Room extends DurableObject {
     const secret = findSecret(body);
     if (secret) return err(`Blocked: this looks like it contains ${secret}. Nothing was saved.`);
     const id = this.event(w.member.id, "post", null, "chat", body);
+    await this.publish();
     return { ok: true, post_id: id };
   }
 
-  async merge(keyHash, stepId, postId) {
+  async merge(keyHash, stepId, postId, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
     if (w.member.role !== "owner") return err("Only the room owner can merge a step.");
@@ -232,12 +408,13 @@ export class Room extends DurableObject {
       postId,
       stepId,
     );
-    this.event(w.member.id, "merged", stepId, null, String(postId));
+    this.event(w.member.id, "merged", stepId, null, String(postId), this.noteModel(keyHash, model));
+    await this.publish();
     return { ok: true };
   }
 
   // ---- pinned links ----
-  async addLink(keyHash, title, url) {
+  async addLink(keyHash, title, url, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
     title = String(title || "").trim();
@@ -268,7 +445,8 @@ export class Room extends DurableObject {
       Date.now(),
     );
     const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
-    this.event(w.member.id, "link_added", null, null, title);
+    this.event(w.member.id, "link_added", null, null, title, this.noteModel(keyHash, model));
+    await this.publish();
     return { ok: true, link_id: id };
   }
 
@@ -281,15 +459,36 @@ export class Room extends DurableObject {
       return err("Only the host or the person who pinned it can remove a link.");
     this.sql.exec("UPDATE links SET removed_at = ? WHERE id = ?", Date.now(), linkId);
     this.event(w.member.id, "link_removed", null, null, l.title);
+    await this.publish();
     return { ok: true };
   }
 
   // ---- reading ----
+  // The whole history, for download and independent verification.
+  async log() {
+    if (!this.exists()) return err("This room does not exist.");
+    return {
+      room: {
+        title: this.meta("title"),
+        brief: this.meta("brief"),
+        brief_hash: this.meta("brief_hash"),
+        created_at: Number(this.meta("created_at")),
+        members: this.sql
+          .exec("SELECT id, name, role, removed_at, app, model FROM members ORDER BY id")
+          .toArray()
+          .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at, app: m.app, model: m.model })),
+      },
+      events: this.sql
+        .exec("SELECT id, ts, member_id, type, step_id, kind, body, model, prev_hash, hash FROM events ORDER BY id")
+        .toArray(),
+    };
+  }
+
   // Small card data for the hallway.
   async summary() {
     if (!this.exists()) return err("This room does not exist.");
     const members = this.sql
-      .exec("SELECT id, name, role FROM members WHERE removed_at IS NULL ORDER BY id")
+      .exec("SELECT id, name, role, model, icon FROM members WHERE removed_at IS NULL ORDER BY id")
       .toArray();
     const posters = new Set(
       this.sql.exec("SELECT DISTINCT member_id FROM events WHERE type = 'post'").toArray().map((r) => r.member_id),
@@ -297,7 +496,11 @@ export class Room extends DurableObject {
     const n = (q) => this.sql.exec(q).one().n;
     return {
       title: this.meta("title"),
-      members: members.map((m) => ({ name: m.name, role: m.role, posted: posters.has(m.id) })),
+      topic: this.meta("topic") || "other",
+      visibility: this.visibility(),
+      created_at: Number(this.meta("created_at")),
+      started: this.started(),
+      members: members.map((m) => ({ name: m.name, role: m.role, model: m.model, icon: m.icon, posted: posters.has(m.id) })),
       post_count: n("SELECT COUNT(*) AS n FROM events WHERE type = 'post'"),
       step_count: n("SELECT COUNT(*) AS n FROM steps"),
       done_count: n("SELECT COUNT(*) AS n FROM steps WHERE status = 'done'"),
@@ -308,9 +511,9 @@ export class Room extends DurableObject {
   async state(since = 0, tail = 0) {
     if (!this.exists()) return err("This room does not exist.");
     const members = this.sql
-      .exec("SELECT id, name, role, removed_at FROM members ORDER BY id")
+      .exec("SELECT id, name, role, removed_at, app, model, icon FROM members ORDER BY id")
       .toArray()
-      .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at }));
+      .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at, app: m.app, model: m.model, icon: m.icon }));
     const steps = this.sql.exec("SELECT * FROM steps ORDER BY id").toArray();
     const events = tail
       ? this.sql
@@ -325,6 +528,11 @@ export class Room extends DurableObject {
       brief: this.meta("brief"),
       brief_hash: this.meta("brief_hash"),
       created_at: Number(this.meta("created_at")),
+      start_mode: this.startMode(),
+      started: this.started(),
+      visibility: this.visibility(),
+      topic: this.meta("topic") || "other",
+      started_at: Number(this.meta("started_at")) || null,
       members,
       steps,
       links: this.sql

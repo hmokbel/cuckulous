@@ -1,10 +1,11 @@
-import { Room, LIMITS } from "./room.js";
-import { handleMcp } from "./mcp.js";
+import { Room, LIMITS, TOPICS } from "./room.js";
+import { Directory } from "./directory.js";
+import { handleMcp, INSTRUCTIONS, TOOLS } from "./mcp.js";
 import { homePage, roomPage, notFound, STYLE } from "./pages.js";
 import APP_JS from "./app.client.js";
 import { findSecret } from "./scan.js";
 
-export { Room };
+export { Room, Directory };
 
 const ROOM_RE = /^[A-Za-z0-9_-]{16}$/;
 const KEY_RE = /^[A-Za-z0-9_-]{32}$/;
@@ -46,6 +47,7 @@ const json = (data, status = 200) =>
 const out = (r) => json(r, r && r.error ? 400 : 200);
 
 const stubFor = (env, roomId) => env.ROOM.get(env.ROOM.idFromName(roomId));
+const hallway = (env) => env.DIRECTORY.get(env.DIRECTORY.idFromName("hallway"));
 
 async function body(request) {
   try {
@@ -73,6 +75,18 @@ export default {
       return new Response(APP_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
     if (method === "GET" && url.pathname === "/style.css")
       return new Response(STYLE, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
+    // What every connected AI is told and can do, so the join page can show it word for word.
+    if (method === "GET" && url.pathname === "/api/instructions")
+      return json({
+        instructions: INSTRUCTIONS,
+        tools: TOOLS.map((t) => ({ name: t.name, title: t.title, description: t.description })),
+      });
+
+    // Public rooms for the hallway (private rooms are never listed).
+    if (method === "GET" && url.pathname === "/api/rooms") {
+      const topic = url.searchParams.get("topic") || "";
+      return json({ rooms: await hallway(env).list(TOPICS.includes(topic) ? topic : "") });
+    }
 
     // Create a room
     if (method === "POST" && url.pathname === "/api/rooms") {
@@ -89,15 +103,24 @@ export default {
       if (secret) return json({ error: `The brief looks like it contains ${secret}. Remove it first.` }, 400);
       const roomId = randomId(12);
       const ownerKey = randomId(24);
+      const visibility = b.visibility === "public" ? "public" : "private";
+      // Private rooms get one invite link anyone can use to take their own seat.
+      const inviteCode = visibility === "private" ? randomId(24) : null;
       const r = await stubFor(env, roomId).create({
+        roomId,
         title,
         brief,
         briefHash: await sha256(brief),
         ownerName: name,
         ownerKeyHash: await sha256(ownerKey),
+        ownerIcon: b.icon,
+        startMode: String(b.start_mode || "open"),
+        visibility,
+        topic: String(b.topic || "other"),
+        inviteHash: inviteCode ? await sha256(inviteCode) : null,
       });
       if (r.error) return json(r, 500);
-      return json({ room_id: roomId, owner_key: ownerKey });
+      return json({ room_id: roomId, owner_key: ownerKey, visibility, ...(inviteCode ? { invite_code: inviteCode } : {}) });
     }
 
     // Room API: /api/r/<room>/<action>
@@ -111,6 +134,36 @@ export default {
       if (method === "GET" && action === "state") {
         const r = await stub.state(Number(url.searchParams.get("since")) || 0);
         return json(r, r.error ? 404 : 200);
+      }
+      // Full hash-chained history as JSON lines: a room line, then one line per event.
+      if (method === "GET" && action === "log") {
+        const r = await stub.log();
+        if (r.error) return json(r, 404);
+        const lines = [JSON.stringify({ room: r.room }), ...r.events.map((e) => JSON.stringify(e))];
+        return new Response(lines.join("\n") + "\n", {
+          headers: {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            "content-disposition": `attachment; filename="cuckulous-${parts[2]}.jsonl"`,
+            "cache-control": "no-store",
+            ...SECURITY_HEADERS,
+          },
+        });
+      }
+      // Take a seat: open for public rooms, needs the invite code for private ones.
+      if (method === "POST" && action === "join") {
+        const b = await body(request);
+        const name = String(b.name || "").trim();
+        if (!name || name.length > LIMITS.name) return json({ error: "Give a name up to 40 characters." }, 400);
+        const invite = String(b.invite || "");
+        const memberKey = randomId(24);
+        const r = await stub.join({
+          name,
+          icon: b.icon,
+          memberKeyHash: await sha256(memberKey),
+          inviteHash: KEY_RE.test(invite) ? await sha256(invite) : null,
+        });
+        if (r.error) return json(r, /invite link|private/.test(r.error) ? 403 : r.error.includes("does not exist") ? 404 : 400);
+        return json({ ok: true, member_key: memberKey });
       }
       const key = request.headers.get("x-key") || "";
       if (!KEY_RE.test(key)) return json({ error: "Missing or invalid key." }, 403);
@@ -134,6 +187,12 @@ export default {
         if (action === "step") return out(await stub.addStep(keyHash, b.title, b.detail));
         if (action === "say") return out(await stub.say(keyHash, b.body));
         if (action === "merge") return out(await stub.merge(keyHash, Number(b.step_id), Number(b.post_id)));
+        if (action === "start") return out(await stub.start(keyHash));
+        if (action === "invite-link") {
+          const code = randomId(24);
+          const r = await stub.rotateInvite(keyHash, await sha256(code));
+          return r.error ? out(r) : json({ ok: true, invite_code: code });
+        }
       }
       return notFound();
     }
@@ -143,6 +202,7 @@ export default {
       if (parts.length === 2) return html(roomPage(parts[1], "watch"));
       if (parts.length === 3 && parts[2] === "join") return html(roomPage(parts[1], "join"));
       if (parts.length === 3 && parts[2] === "admin") return html(roomPage(parts[1], "admin"));
+      if (parts.length === 3 && parts[2] === "invite") return html(roomPage(parts[1], "invite"));
     }
 
     return notFound();
