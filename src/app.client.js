@@ -172,7 +172,7 @@
                 h("span", {}, `${s.members.length} 👤`),
                 h("span", {}, `${s.post_count} 💬`),
                 h("span", {}, `${s.done_count}/${s.step_count} ✅`),
-                isLive ? h("span", { class: "live" }, "● live") : h("span", {}, ago(s.last_ts) + " ago"))))));
+                !s.started ? h("span", {}, "⏳ waiting to start") : isLive ? h("span", { class: "live" }, "● live") : h("span", {}, ago(s.last_ts) + " ago"))))));
         math(title);
       }
       for (const { r } of sums.filter((x) => x.gone)) store.forget(r.id);
@@ -190,6 +190,15 @@
         h("label", {}, "What's the problem?", h("input", { name: "title", required: true, maxlength: "200", placeholder: "Is 2^n + 1 ever a perfect cube?" })),
         h("label", {}, "Brief", h("span", { class: "hint" }, "What the agents should do and how. LaTeX works: $x^2$."),
           h("textarea", { name: "brief", required: true, maxlength: "8000", rows: "6", placeholder: "Problem: ...\n\nRules: break it into steps, claim before working, show every calculation, post results with a check." })),
+        h("div", { class: "modes" },
+          h("div", { class: "mlabel" }, "How should it start?"),
+          ...[
+            ["on_join", "Wait for another AI (recommended)", "Your AI can lay out the steps, but nobody solves anything until a friend's AI joins. Then the room starts by itself, so the record shows who really did what."],
+            ["open", "Start right away", "Your AI can work on the problem immediately, even if nobody else joins. The first AI in may end up doing most of it."],
+            ["manual", "I'll press Start", "Nobody's AI works, not even yours, until you press Start. Fairest when you're timing the room."],
+          ].map(([value, title, desc], i) =>
+            h("label", { class: "mode" }, h("input", { type: "radio", name: "start_mode", value, checked: i === 0 ? "" : null }),
+              h("span", {}, h("b", {}, title), h("span", { class: "hint" }, desc))))),
         h("label", {}, "Your name", h("input", { name: "name", required: true, maxlength: "40", value: store.name, placeholder: "Noah" })),
         h("label", {}, "Host code", h("span", { class: "hint" }, "Keeps strangers from opening rooms. Ask Noah for it."),
           h("input", { name: "code", required: true, autocomplete: "off", value: store.code })),
@@ -221,7 +230,7 @@
   // =====================================================================
   // ROOM (watch / join / admin)
   // =====================================================================
-  const state = { members: [], steps: [], events: [], last: 0, loaded: false, me: null, brief: "" };
+  const state = { members: [], steps: [], events: [], last: 0, loaded: false, me: null, brief: "", started: true, startMode: "open", startedAt: null };
   const byId = () => Object.fromEntries(state.members.map((m) => [m.id, m]));
   const nameOf = (id) => byId()[id]?.name || "?";
   // Each member is a person plus their AI. The model is what the AI reports about
@@ -293,7 +302,12 @@
       tabs,
       paneBox,
       h("p", {}, "5. Then tell your AI:"),
-      copyRow(PROMPT));
+      copyRow(PROMPT),
+      !state.started && h("p", { class: "hint" }, state.startMode === "on_join" && !isOwner()
+        ? "The room is waiting for your AI: it starts the moment your AI takes its first action."
+        : isOwner() && state.startMode === "on_join"
+          ? "Until a friend's AI joins, your AI can only lay out steps. The room starts by itself when one does."
+          : "The room hasn't started yet. Connect now; your AI will wait until the host starts the room."));
     pick("Claude");
   }
 
@@ -356,6 +370,7 @@
       step_added: `added step #${e.step_id}`,
       claimed: `claimed step #${e.step_id}`,
       merged: `merged step #${e.step_id}`,
+      started: e.body === "joined" ? "joined, so the room started" : "started the room",
       post: `posted ${e.kind}${e.step_id ? ` on #${e.step_id}` : ""}`,
     })[e.type] || e.type;
     const feed = h("ol", { class: "feed" });
@@ -404,6 +419,53 @@
       out.className = "verify-out bad-text";
       out.textContent = x.message;
     }
+  }
+
+  // ---------- waiting to start ----------
+  const MODE_TEXT = {
+    on_join: ["Waits for another AI", "The host's AI can lay out the steps. The room starts by itself the moment another person's AI joins and starts working."],
+    manual: ["Host presses Start", "Nobody's AI works until the host presses Start, so everyone begins at the same moment."],
+    open: ["Started right away", ""],
+  };
+  function renderStart() {
+    const pill = $(".live-pill");
+    pill.classList.toggle("waiting", !state.started);
+    pill.lastChild.textContent = state.started ? " live" : " waiting to start";
+    const sec = $("#start-sec");
+    sec.hidden = state.started;
+    if (state.started) return;
+    const card = $("#startcard");
+    card.textContent = "";
+    const [modeName, modeText] = MODE_TEXT[state.startMode] || MODE_TEXT.open;
+    const ready = state.members.filter((m) => !m.removed).map((m) =>
+      h("div", { class: "ready" }, avatar(m.name), h("span", {}, m.name, m.role === "owner" ? " (host)" : ""),
+        m.app || m.model
+          ? h("span", { class: "st-ok" }, `✓ AI connected${m.model ? ` · ${m.model}` : appName(m.app) ? ` · ${appName(m.app)}` : ""}`)
+          : h("span", { class: "st-no" }, "not connected yet")));
+    const planned = state.steps.length;
+    card.append(
+      h("h3", {}, "⏳ Waiting to start", h("span", { class: "chip" }, modeName)),
+      h("p", {}, modeText),
+      state.startMode === "on_join" && h("p", {}, planned ? `${planned} step${planned > 1 ? "s" : ""} planned so far.` : "No steps planned yet."),
+      ...ready,
+      isOwner()
+        ? h("button", {
+            class: "go", type: "button",
+            onclick: async (e) => {
+              e.target.disabled = true;
+              try {
+                await api(`/api/r/${roomId}/start`, { method: "POST", ...withKey, body: "{}" });
+                toast("The room has started");
+                await poll();
+              } catch (x) {
+                alert(x.message);
+                e.target.disabled = false;
+              }
+            },
+          }, state.startMode === "on_join" ? "Start now without waiting" : "Start the room")
+        : h("p", { class: "hint" }, state.startMode === "on_join"
+            ? "Connect your AI with 🔌 below and tell it to begin. The room starts the moment it does."
+            : "Connect your AI now with 🔌 below. Once the host starts the room, tell your AI to begin."));
   }
 
   // =====================================================================
@@ -473,8 +535,10 @@
     });
     const times = [...bars.flatMap((b) => [b.start, b.end]), ...marks.map((m) => m.ts)];
     if (!times.length) return null;
-    const t0 = Math.min(...times);
-    const t1 = Math.max(...times, t0 + 1000);
+    // The clock starts when the host starts the room; planning before that shows to the left of the start line.
+    const startAt = state.startedAt || null;
+    const t0 = Math.min(...times, startAt ?? Infinity);
+    const t1 = Math.max(...times, (startAt ?? t0) + 1000);
 
     // Time when two or more different members were each holding a step.
     const lanesIds = [...new Set([...bars.map((b) => b.m), ...marks.map((m) => m.m)])];
@@ -495,7 +559,7 @@
     // Steps one AI proposed and a different one took on.
     const handoffs = state.steps.filter((st) => proposer[st.id] && firstTaker[st.id] && proposer[st.id].id !== firstTaker[st.id].id).length;
     const models = new Set([...Object.values(postAuthor).map((p) => p.model), ...Object.values(proposer).map((p) => p.model)].filter(Boolean));
-    return { bars, marks, t0, t1, par, parMs, lanesIds, handoffs, crossChecks, models, proposer, firstTaker, weighedIn, postAuthor };
+    return { bars, marks, t0, t1, startAt, par, parMs, lanesIds, handoffs, crossChecks, models, proposer, firstTaker, weighedIn, postAuthor };
   }
 
   function renderTeam() {
@@ -510,9 +574,12 @@
     const width = (a, b) => `${Math.max(0.8, (100 * (b - a)) / span)}%`;
     const merged = state.steps.filter((st) => st.status === "done").length;
     const chip = (big, small, title) => h("div", { class: "tchip", title }, h("b", {}, big), h("span", {}, small));
+    const clock = tw.startAt ? Math.max(0, tw.t1 - tw.startAt) : span;
     box.append(h("div", { class: "chips" },
-      chip(dur(span), "from first move to latest", "Time between the first and the latest action by any AI"),
-      chip(`${tw.lanesIds.length > 1 ? Math.round((100 * tw.parMs) / span) : 0}%`, "with 2+ AIs at once", "Share of that time when two or more AIs were each holding a step"),
+      tw.startAt
+        ? chip(dur(clock), "since the start", "Time from the host pressing Start to the latest action")
+        : chip(dur(span), "from first move to latest", "Time between the first and the latest action by any AI"),
+      chip(`${tw.lanesIds.length > 1 ? Math.round((100 * tw.parMs) / Math.max(1, clock)) : 0}%`, "with 2+ AIs at once", "Share of that time when two or more AIs were each holding a step"),
       chip(String(tw.handoffs), tw.handoffs === 1 ? "handoff" : "handoffs", "Steps one AI proposed and a different AI took on"),
       chip(String(tw.crossChecks), "weigh-ins", "Posts on a step someone else was holding: checks, questions, alternative attempts"),
       chip(`${merged}/${state.steps.length}`, "steps merged", "Steps the host accepted"),
@@ -528,6 +595,11 @@
         band.style.left = pct(p.a);
         band.style.width = width(p.a, p.b);
         track.append(band);
+      }
+      if (tw.startAt) {
+        const line = h("div", { class: "startline", title: "The host started the room" });
+        line.style.left = pct(tw.startAt);
+        track.append(line);
       }
       for (const b of tw.bars.filter((x) => x.m === id)) {
         const bar = h("div", {
@@ -548,7 +620,9 @@
         track));
     }
     tl.append(
-      h("div", { class: "axis" }, h("div", {}), h("div", {}, h("span", {}, "0:00"), h("span", {}, `+${dur(span / 2)}`), h("span", {}, `+${dur(span)}`))),
+      h("div", { class: "axis" }, h("div", {}), tw.startAt
+        ? h("div", {}, h("span", {}, tw.startAt > tw.t0 ? `−${dur(tw.startAt - tw.t0)} (planning)` : "start"), h("span", {}, "▏start"), h("span", {}, `+${dur(clock)}`))
+        : h("div", {}, h("span", {}, "0:00"), h("span", {}, `+${dur(span / 2)}`), h("span", {}, `+${dur(span)}`))),
       h("div", { class: "tl-key" },
         h("span", {}, h("i", { class: "sw", style: "background:#F5D38B" }), "holding a step (claim → latest post)"),
         h("span", {}, h("i", { class: "sw", style: "background:#9ED7B0" }), "its post was merged"),
@@ -730,6 +804,7 @@
     if (!board.children.length) board.append(h("p", { class: "empty" }, "Quiet so far. The first agent to arrive will break the problem into steps."));
     math(board);
     $("#meta").textContent = `${state.steps.filter((s) => s.status === "done").length}/${state.steps.length} steps merged · ${posts.length} posts`;
+    renderStart();
     renderTeam();
     bottomBar();
   }
@@ -750,7 +825,11 @@
           state.loaded = true;
           changed = true;
         }
-        const membersChanged = JSON.stringify(d.members) !== JSON.stringify(state.members);
+        const startChanged = d.started !== state.started;
+        state.started = d.started;
+        state.startMode = d.start_mode;
+        state.startedAt = d.started_at;
+        const membersChanged = startChanged || JSON.stringify(d.members) !== JSON.stringify(state.members);
         const stepsChanged = JSON.stringify(d.steps) !== JSON.stringify(state.steps);
         state.members = d.members;
         state.steps = d.steps;

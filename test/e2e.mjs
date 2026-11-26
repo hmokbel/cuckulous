@@ -137,6 +137,45 @@ const relabeled = { ...logEvents.find((e) => e.id === postId), model: "Some othe
 ok(sha(JSON.stringify([relabeled.id, relabeled.ts, relabeled.member_id, relabeled.type, relabeled.step_id ?? null, relabeled.kind ?? null, relabeled.body ?? null, relabeled.model, relabeled.prev_hash])) !== relabeled.hash, "changing which model wrote a post breaks its hash too");
 ok(sha(tamperedInput) !== logEvents[1].hash, "an edited event no longer matches its hash");
 
+// Start modes. "manual": nobody acts until the host starts the room.
+const mkRoom = async (start_mode) => {
+  const c = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: `Start mode ${start_mode}`, brief: "Find $x$.", name: "Host", start_mode }) });
+  const m = await j(`/api/r/${c.data.room_id}/invite`, { method: "POST", headers: { "x-key": c.data.owner_key }, body: JSON.stringify({ name: "Friend" }) });
+  return { id: c.data.room_id, owner: c.data.owner_key, member: m.data.member_key };
+};
+const man = await mkRoom("manual");
+const manHost = await connect(`${BASE}/mcp/${man.id}/${man.owner}`);
+const manFriend = await connect(`${BASE}/mcp/${man.id}/${man.member}`);
+r = await call(manHost, "add_step", { title: "Plan" });
+ok(r.isError && /hasn't started/.test(r.data), "manual: even the host's AI can't act before Start");
+r = await call(manFriend, "read_room", {});
+ok(!r.isError && r.data.status === "waiting to start" && /wait/.test(r.data.next), "manual: read_room says the room is waiting");
+const notHost = await j(`/api/r/${man.id}/start`, { method: "POST", headers: { "x-key": man.member }, body: "{}" });
+ok(notHost.status === 400, "manual: only the host can start the room");
+const go = await j(`/api/r/${man.id}/start`, { method: "POST", headers: { "x-key": man.owner }, body: "{}" });
+ok(go.status === 200, "manual: host starts the room");
+r = await call(manFriend, "add_step", { title: "Now it works" });
+ok(!r.isError, "manual: after Start, AIs can work");
+const manState = await j(`/api/r/${man.id}/state`);
+ok(manState.data.started && manState.data.started_at > 0 && manState.data.events.some((e) => e.type === "started"), "manual: the start is on the record");
+
+// "on_join": the host's AI may only plan until another member's AI shows up.
+const oj = await mkRoom("on_join");
+const ojHost = await connect(`${BASE}/mcp/${oj.id}/${oj.owner}`);
+r = await call(ojHost, "add_step", { title: "Split the problem" });
+ok(!r.isError, "on_join: host's AI can lay out steps while waiting");
+r = await call(ojHost, "claim_step", { step_id: 1 });
+ok(r.isError && /another person's AI/.test(r.data), "on_join: host's AI can't start solving alone");
+ok((await j(`/api/r/${oj.id}/state`)).data.started === false, "on_join: connecting alone doesn't start the room");
+const ojFriend = await connect(`${BASE}/mcp/${oj.id}/${oj.member}`);
+ok((await j(`/api/r/${oj.id}/state`)).data.started === false, "on_join: a friend's app connecting isn't enough (it may just be fetching the tool list)");
+r = await call(ojFriend, "read_room", {});
+const ojState = await j(`/api/r/${oj.id}/state`);
+ok(ojState.data.started && ojState.data.events.some((e) => e.type === "started" && e.body === "joined"), "on_join: the friend's AI's first action starts the room");
+r = await call(ojHost, "claim_step", { step_id: 1 });
+ok(!r.isError, "on_join: after the start, the host's AI can work");
+ok((await j(`/api/r/${room}/state`)).data.start_mode === "open", "rooms opened without a mode keep v0's behaviour (open)");
+
 for (const p of [`/r/${room}`, `/r/${room}/join`, `/r/${room}/admin`, "/", "/app.js", "/style.css"]) {
   const res = await fetch(BASE + p);
   ok(res.status === 200, `GET ${p.length > 30 ? p.slice(0, 30) + "…" : p}`);

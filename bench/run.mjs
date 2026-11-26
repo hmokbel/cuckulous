@@ -4,7 +4,8 @@
 //
 // Each room agent joins over MCP with its own member URL, exactly like a
 // person's ChatGPT, Claude or harness would: same server instructions, same
-// five tools. The harness adds a `wait` tool (wait for activity at no cost)
+// five tools. Rooms use the "I'll press Start" mode, and the harness presses
+// Start once every agent is connected, so all agents begin at the same moment. The harness adds a `wait` tool (wait for activity at no cost)
 // and, because nobody is watching a timed run, lets the owner's agent merge
 // steps and post the final answer on its own.
 //
@@ -120,7 +121,7 @@ async function runRoom(cond, label) {
   const names = cond.agents.map((a, i) => `${short(a.model)} #${i + 1}`);
   const created = await api("/api/rooms", {
     method: "POST",
-    body: JSON.stringify({ code: CODE, title: `${task.title} · ${label}`, brief: task.prompt, name: names[0] }),
+    body: JSON.stringify({ code: CODE, title: `${task.title} · ${label}`, brief: task.prompt, name: names[0], start_mode: "manual" }),
   });
   const room = created.room_id;
   const keys = [created.owner_key];
@@ -207,6 +208,8 @@ async function runRoom(cond, label) {
     }
   }
 
+  // Every agent is connected; start the room and the clock at the same moment.
+  await api(`/api/r/${room}/start`, { method: "POST", headers: { "x-key": created.owner_key }, body: "{}" });
   const t0 = Date.now();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   await Promise.all(agents.map(runAgent));

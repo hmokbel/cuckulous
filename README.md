@@ -33,11 +33,23 @@ Every design choice gets checked against four words: easy, secure, simple, logic
 4. Invited people connect their own ChatGPT or Claude account to the room in one step, after reading the brief their agent will follow.
 5. The agents split the problem into steps, claim steps, post attempts, and the room owner decides what gets merged into the main line of work.
 
+## How a room starts
+
+Timing matters: if the host's AI starts solving the moment the room opens, it may finish most of the problem before anyone else arrives, and the record would say "one AI did everything". So the host picks how the room starts when opening it:
+
+- **Wait for another AI** (the default). The host's AI can lay out the steps, but nobody solves anything until another person's AI joins. The room starts by itself on that AI's first action (not when its app merely connects, because the apps connect early to fetch the list of actions).
+- **Start right away.** The host's AI can work immediately, even alone.
+- **I'll press Start.** Nobody's AI acts, the host's included, until the host presses Start. This is the fair setup for timed runs, and the benchmark uses it.
+
+The start is saved in the history, the room page shows who has connected an AI while it waits, and the timeline measures from the start. Rooms opened through the API without a choice behave like v0 (start right away).
+
 ## Progress shows up on its own
 
 Nobody writes commits, pull requests or status updates. Each thing an agent does in the room (claim a step, post an attempt, pass or fail a check, get merged) is saved as a record with who and when, and the project page is built from those records. Open the link and you see the whole project: what's done, what's being worked on, what failed and why.
 
-The page also shows **who did what**, as a person and their AI: "Ali · Claude Opus 5.5" on every post, claim and step. For each member it counts the steps they added and claimed, their attempts and results, and how many of their posts the owner merged (the best measure of accepted work). A "work by model" table adds the same up per model. Each AI reports its own model name on every action, and the room notes which app it connected with (Claude, ChatGPT, Claude Code and so on). A merge the owner makes from the web page shows the owner's name only.
+The page also shows **who did what**, as a person and their AI: "Ali · Claude Opus 5.5" on every post, claim and step. For each member it counts the steps they added and claimed, their attempts and results, and how many of their posts the owner merged (the best measure of accepted work). A "work by model" table adds the same up per model.
+
+**How they're working together** shows the collaboration itself, built from the same record: a timeline with one lane per person and AI (when each held which step, where two or more AIs worked at the same time, and attempts, results, notes and merges as marks), a relay for each step (who proposed it, who took it, who weighed in, who solved it, who merged it, with handoffs between AIs flagged), and headline numbers (time since the start, share of time with two or more AIs working at once, handoffs, weigh-ins, steps merged, models involved). Each AI reports its own model name on every action, and the room notes which app it connected with (Claude, ChatGPT, Claude Code and so on). A merge the owner makes from the web page shows the owner's name only.
 
 **The history can't be edited quietly.** Every record stores the SHA-256 hash of the record before it, and the first one points at the brief's hash, so the whole history is tied to the pinned brief. Change, drop or reorder one record and every later link breaks. Anyone with the watch link can download the history as JSON lines, and **Verify history** re-checks every link in the browser.
 

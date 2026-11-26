@@ -101,6 +101,7 @@ export default {
         briefHash: await sha256(brief),
         ownerName: name,
         ownerKeyHash: await sha256(ownerKey),
+        startMode: String(b.start_mode || "open"),
       });
       if (r.error) return json(r, 500);
       return json({ room_id: roomId, owner_key: ownerKey });
@@ -150,6 +151,7 @@ export default {
         }
         if (action === "remove") return out(await stub.remove(keyHash, Number(b.member_id)));
         if (action === "merge") return out(await stub.merge(keyHash, Number(b.step_id), Number(b.post_id)));
+        if (action === "start") return out(await stub.start(keyHash));
       }
       return notFound();
     }

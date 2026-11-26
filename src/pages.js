@@ -74,6 +74,7 @@ export const roomPage = (room, mode) =>
     <span class="brief-text" id="brief"></span>
     <span class="hash" id="hash"></span>
   </button>
+  <section id="start-sec" hidden><div class="startcard" id="startcard"></div></section>
   <section>
     <h2 class="sec">On stage</h2>
     <div class="stage" id="stage"></div>
@@ -305,4 +306,21 @@ pre.exact{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-siz
 details.more{margin:6px 0}details.more summary{cursor:pointer;font-weight:800;color:var(--blue);font-size:14px}
 .plain{margin:6px 0 4px 20px;padding:0;font-weight:600;font-size:14px}.plain li{margin:3px 0}
 @media(max-width:480px){.lane,.axis{grid-template-columns:86px 1fr}.lane-who .av{display:none}}
+/* start modes */
+.modes{display:grid;gap:8px;margin:12px 0}
+.mlabel{font-weight:800;font-size:14px}
+.sheet label.mode{display:flex;gap:10px;align-items:flex-start;background:var(--hall);border-radius:14px;padding:10px 12px;margin:0;font-weight:600;cursor:pointer}
+.sheet label.mode input{width:auto;margin-top:4px;accent-color:var(--green)}
+.mode b{display:block;font-size:15px}
+.mode:has(input:checked){box-shadow:0 0 0 2px var(--green)}
+.startcard{background:#FFF6DD;border-radius:20px;padding:14px 16px;margin:10px 0 4px}
+.startcard h3{margin:0 0 4px;font-size:17px;font-weight:900;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.startcard p{margin:4px 0 10px;font-size:14px;font-weight:600;color:var(--ink2)}
+.ready{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px;font-weight:700}
+.ready .av{width:28px;height:28px;font-size:11px}
+.ready .st-ok{color:var(--green-d)}
+.ready .st-no{color:var(--mute)}
+.live-pill.waiting{color:#B26A00}
+.live-pill.waiting .dot{background:#E3AE49}
+.startline{position:absolute;top:-6px;bottom:-6px;width:2px;background:var(--ink);opacity:.55}
 `;

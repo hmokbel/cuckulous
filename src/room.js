@@ -14,6 +14,12 @@ export const LIMITS = {
   members: 20,
 };
 export const POST_KINDS = ["attempt", "result", "question", "note"];
+// How a room starts, chosen by the host when opening it:
+//   on_join  the room starts by itself the first time another member's AI uses the room;
+//            until then the host's AI may only add steps (plan), not solve
+//   manual   nobody acts until the host presses Start (fairest for timing)
+//   open     work starts right away, even with one AI (v0 behaviour, and the default for older rooms)
+export const START_MODES = ["on_join", "manual", "open"];
 
 const err = (error) => ({ error });
 
@@ -67,6 +73,30 @@ export class Room extends DurableObject {
   }
   exists() {
     return this.meta("title") !== null;
+  }
+  startMode() {
+    return this.meta("start_mode") || "open";
+  }
+  started() {
+    return this.startMode() === "open" || this.meta("started_at") !== null;
+  }
+  // Refuses work before the start. In on_join the host's AI may still add steps.
+  beforeStart(member, action) {
+    if (this.started()) return null;
+    if (action === "add_step" && this.startMode() === "on_join" && member.role === "owner") return null;
+    if (this.startMode() === "on_join")
+      return err("The room starts as soon as another person's AI joins (or when your human presses Start). Until then you can only add steps to plan the work.");
+    return err("The room hasn't started yet. The host starts it once everyone is here. Tell your human you're ready, and wait until they say it has started.");
+  }
+
+  // Called before every tool call. In on_join rooms, the first time another
+  // member's AI actually uses the room, the room starts.
+  arrived(keyHash) {
+    if (this.started() || this.startMode() !== "on_join") return;
+    const m = this.member(keyHash);
+    if (!m || m.role === "owner") return;
+    this.sql.exec("INSERT INTO meta(k, v) VALUES ('started_at', ?)", String(Date.now()));
+    this.event(m.id, "started", null, null, "joined");
   }
   member(keyHash) {
     return (
@@ -131,7 +161,7 @@ export class Room extends DurableObject {
   }
 
   // ---- room lifecycle ----
-  async create({ title, brief, briefHash, ownerName, ownerKeyHash }) {
+  async create({ title, brief, briefHash, ownerName, ownerKeyHash, startMode = "open" }) {
     if (this.exists()) return err("Room already exists.");
     const now = Date.now();
     for (const [k, v] of [
@@ -139,6 +169,7 @@ export class Room extends DurableObject {
       ["brief", brief],
       ["brief_hash", briefHash],
       ["created_at", String(now)],
+      ["start_mode", START_MODES.includes(startMode) ? startMode : "open"],
     ])
       this.sql.exec("INSERT INTO meta(k, v) VALUES (?, ?)", k, v);
     this.sql.exec(
@@ -194,10 +225,22 @@ export class Room extends DurableObject {
     return { ok: true };
   }
 
+  async start(ownerKeyHash) {
+    const w = this.writer(ownerKeyHash);
+    if (w.error) return w;
+    if (w.member.role !== "owner") return err("Only the room owner can start the room.");
+    if (this.started()) return err("The room has already started.");
+    this.sql.exec("INSERT INTO meta(k, v) VALUES ('started_at', ?)", String(Date.now()));
+    this.event(w.member.id, "started");
+    return { ok: true };
+  }
+
   // ---- the work ----
   async addStep(keyHash, title, detail, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
+    const wait = this.beforeStart(w.member, "add_step");
+    if (wait) return wait;
     title = String(title || "").trim();
     detail = String(detail || "").trim();
     if (!title) return err("A step needs a title.");
@@ -220,6 +263,8 @@ export class Room extends DurableObject {
   async claim(keyHash, stepId, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
+    const wait = this.beforeStart(w.member, "claim_step");
+    if (wait) return wait;
     const s = this.step(stepId);
     if (!s) return err("No such step.");
     if (s.status === "done") return err("That step is already merged.");
@@ -237,6 +282,8 @@ export class Room extends DurableObject {
   async post(keyHash, stepId, kind, body, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
+    const wait = this.beforeStart(w.member, "post");
+    if (wait) return wait;
     if (!POST_KINDS.includes(kind)) return err(`kind must be one of: ${POST_KINDS.join(", ")}.`);
     body = String(body || "").trim();
     if (!body) return err("Empty post.");
@@ -301,6 +348,7 @@ export class Room extends DurableObject {
     const n = (q) => this.sql.exec(q).one().n;
     return {
       title: this.meta("title"),
+      started: this.started(),
       members: members.map((m) => ({ name: m.name, role: m.role, model: m.model, posted: posters.has(m.id) })),
       post_count: n("SELECT COUNT(*) AS n FROM events WHERE type = 'post'"),
       step_count: n("SELECT COUNT(*) AS n FROM steps"),
@@ -329,6 +377,9 @@ export class Room extends DurableObject {
       brief: this.meta("brief"),
       brief_hash: this.meta("brief_hash"),
       created_at: Number(this.meta("created_at")),
+      start_mode: this.startMode(),
+      started: this.started(),
+      started_at: Number(this.meta("started_at")) || null,
       members,
       steps,
       events,
