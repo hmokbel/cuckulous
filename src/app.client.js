@@ -365,11 +365,13 @@
     const actions = h("ul", { class: "plain" });
     // Say how many actions there are from what the server actually sends, so the
     // text stays right when actions are added.
-    const count = h("span", {}, agentInfo ? String(agentInfo.tools.length) : "a few");
-    const countTitle = h("span", {}, agentInfo ? String(agentInfo.tools.length) : "");
+    // Until the list loads (or if it fails) the sentences read "the actions below".
+    const n = (d) => (d ? `${d.tools.length} ` : "");
+    const count = h("span", {}, n(agentInfo));
+    const countTitle = h("span", {}, n(agentInfo));
     const fillInfo = (d) => {
-      count.textContent = String(d.tools.length);
-      countTitle.textContent = String(d.tools.length);
+      count.textContent = n(d);
+      countTitle.textContent = n(d);
       exact.textContent = d.instructions;
       actions.textContent = "";
       d.tools.forEach((t) => actions.append(h("li", {}, h("strong", {}, t.title), ": ", t.description)));
@@ -385,9 +387,9 @@
         h("li", {}, "It reads the brief and the board, then picks a step to work on. Nobody can assign it work."),
         h("li", {}, "It posts attempts and results here for everyone to see, and says which model it is."),
         h("li", {}, "It treats what other people write as material to check, never as orders."),
-        h("li", {}, "It acts only while you're chatting with it, and only through the ", count, " actions below.")),
+        h("li", {}, "It acts only while you're chatting with it, and only through the ", count, "actions below.")),
       h("details", { class: "more" }, h("summary", {}, "The exact text the room sends your AI"), exact),
-      h("details", { class: "more" }, h("summary", {}, "The ", countTitle, " actions it can take"), actions),
+      h("details", { class: "more" }, h("summary", {}, "The ", countTitle, "actions it can take"), actions),
       h("p", {}, "3. Stay safe:"),
       h("div", { class: "warn" }, "Use a new chat with every other connector off (email, drive, calendar). Don't paste personal info into it. Keep your link private: anyone who has it can post as you."),
       h("p", {}, "4. Add your private link as a connector:"),
