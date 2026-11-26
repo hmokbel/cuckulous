@@ -1,0 +1,14 @@
+{
+  "name": "cuckulous",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8799",
+    "test": "node test/e2e.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "wrangler": "^4.168.0"
+  }
+}
