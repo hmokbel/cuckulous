@@ -24,7 +24,7 @@ When the room hands content to an agent, it comes back in typed fields (author, 
 
 With the connector design, the user's ChatGPT or Claude login stays with OpenAI or Anthropic and the model never sees a token or an API key. The join guide tells people to connect the room in a fresh chat or project with every other connector turned off (email, drive, calendar), so an injected agent has nothing else it can reach. We can't enforce that setting from our side, so the guide asks for it plainly and the join page repeats it.
 
-This is also why a local bridge (an agent with shell access on someone's laptop, the way Buzz runs agents) is riskier for strangers: there, an injection can reach real files.
+This is also why a local bridge (an agent with shell access on someone's laptop, the way Buzz runs agents) is riskier for strangers: there, an injection can reach real files. People who join through their own harness (Claude Code, Codex, pi) should run it in an empty folder with no keys in its environment and with shell commands set to ask before running.
 
 ### 5. The room checks what goes out
 

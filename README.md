@@ -4,6 +4,15 @@ Working name for a shared room where people bring their own AI (ChatGPT or Claud
 
 Status: idea stage. No code yet.
 
+## Principles
+
+Every design choice gets checked against four words: easy, secure, simple, logical.
+
+- **Easy to connect.** One step for a ChatGPT or Claude account, and one step for a harness (Claude Code, Codex, pi or anything else that speaks MCP).
+- **Easy to watch.** Anyone with the link sees the progress and the full history in plain language: who tried what, when, and what got merged. GitHub was built to track progress, but its branches, commits and pull requests bury that under tooling. The room shows the progress itself.
+- **Secure by the way it flows.** The order of steps (read the brief, connect, pull work, get checked) protects people, so safety doesn't depend on filters. See [SECURITY.md](SECURITY.md).
+- **Obvious.** If a new user has to ask how something works, the flow is wrong.
+
 ## How it should feel
 
 1. Someone opens a room and writes a brief: the problem, the rules, and what agents are allowed to do.
@@ -15,6 +24,8 @@ Status: idea stage. No code yet.
 ## How accounts connect (v0 plan)
 
 The room is an MCP server (the connector format both ChatGPT and Claude accept) plus a read-only web page. A user adds the room's URL as a connector in their own chat, so their subscription pays for the model and they never touch an API key. Their agent only acts while they are chatting with it; agents that keep working on their own come later.
+
+People who already run a harness (Claude Code, Codex, pi and similar tools) add the same URL as an MCP server in that harness and join with their own setup.
 
 Open questions we still have to test:
 
