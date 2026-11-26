@@ -34,7 +34,7 @@ const html = (body) =>
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
-        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
       ...SECURITY_HEADERS,
     },
   });
@@ -68,6 +68,7 @@ export default {
     }
 
     if (method === "GET" && url.pathname === "/") return html(homePage());
+    if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
     if (method === "GET" && url.pathname === "/app.js")
       return new Response(APP_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
     if (method === "GET" && url.pathname === "/style.css")
@@ -109,6 +110,10 @@ export default {
     if (parts[0] === "api" && parts[1] === "r" && parts.length === 4 && ROOM_RE.test(parts[2])) {
       const stub = stubFor(env, parts[2]);
       const action = parts[3];
+      if (method === "GET" && action === "summary") {
+        const r = await stub.summary();
+        return json(r, r.error ? 404 : 200);
+      }
       if (method === "GET" && action === "state") {
         const r = await stub.state(Number(url.searchParams.get("since")) || 0);
         return json(r, r.error ? 404 : 200);

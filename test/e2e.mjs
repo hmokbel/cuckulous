@@ -94,6 +94,8 @@ ok(!posts.some((p) => /sk-ant|ghp_/.test(p.body)), "blocked posts were never sto
 r = await call(ali, "read_room", { since_event: 0 });
 ok(!r.isError && r.data.activity.length >= 5 && r.data.board[0].untrusted.title === "Base case n=1", "read_room since_event returns history with untrusted labels");
 
+const sum = await j(`/api/r/${room}/summary`);
+ok(sum.status === 200 && sum.data.post_count === 2 && sum.data.done_count === 1 && sum.data.members.length === 2, "hallway summary counts are right", JSON.stringify(sum.data).slice(0, 90));
 const members = st.data.members;
 const aliId = members.find((m) => m.name === "Ali").id;
 const rm = await j(`/api/r/${room}/remove`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ member_id: aliId }) });

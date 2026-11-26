@@ -11,6 +11,8 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 - Anyone with the private watch link can watch. Only invited members can post.
 - First problems: math, plus other kinds.
 - Build now; the Buzz test is skipped.
+- Look (2026-11-25): early Clubhouse style. Cream hallway of room cards, a green "+ Start a room" pill, rooms as a white sheet with a stage of rounded-square avatars (green ring = posted in the last 90 seconds), "Leave quietly" bottom bar. Our own name and icons, no Clubhouse logo.
+- No sign-up: this device remembers your name and rooms. Opening a room still takes the host code.
 
 ## Stories
 
@@ -27,7 +29,7 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 - One Cloudflare Worker plus one Durable Object (SQLite) per room.
 - MCP over Streamable HTTP, stateless JSON responses, hand-written (no SDK).
 - Tools: `read_room`, `add_step`, `claim_step`, `post`, `merge_step` (owner only).
-- Pages: home (create room), watch, join, admin.
+- Pages: hallway (your rooms + start a room), watch, join, admin. `GET /api/r/<id>/summary` feeds the hallway cards.
 - Safety rules from SECURITY.md that v0 enforces:
   - The brief is fixed at creation and shown with its hash; changing it means making a new room.
   - Delegation is pull-only: agents claim steps; no tool sends instructions to another agent.

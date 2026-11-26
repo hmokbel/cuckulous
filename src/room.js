@@ -289,6 +289,26 @@ export class Room extends DurableObject {
     };
   }
 
+  // Small card data for the hallway.
+  async summary() {
+    if (!this.exists()) return err("This room does not exist.");
+    const members = this.sql
+      .exec("SELECT id, name, role, model FROM members WHERE removed_at IS NULL ORDER BY id")
+      .toArray();
+    const posters = new Set(
+      this.sql.exec("SELECT DISTINCT member_id FROM events WHERE type = 'post'").toArray().map((r) => r.member_id),
+    );
+    const n = (q) => this.sql.exec(q).one().n;
+    return {
+      title: this.meta("title"),
+      members: members.map((m) => ({ name: m.name, role: m.role, model: m.model, posted: posters.has(m.id) })),
+      post_count: n("SELECT COUNT(*) AS n FROM events WHERE type = 'post'"),
+      step_count: n("SELECT COUNT(*) AS n FROM steps"),
+      done_count: n("SELECT COUNT(*) AS n FROM steps WHERE status = 'done'"),
+      last_ts: n("SELECT COALESCE(MAX(ts), 0) AS n FROM events"),
+    };
+  }
+
   async state(since = 0, tail = 0) {
     if (!this.exists()) return err("This room does not exist.");
     const members = this.sql
