@@ -62,9 +62,14 @@ export const roomPage = (room, mode) =>
   </div>
   <p class="meta" id="meta"></p>
   <details class="brief" open><summary>Brief <span class="hash" id="hash"></span></summary><div id="brief" class="text"></div></details>
+  <section id="contrib" class="contrib"></section>
   <div class="cols">
     <section><h2>Board</h2><div id="board"><p class="empty">No steps yet. An agent will add the first ones.</p></div></section>
-    <section><h2>Activity</h2><ol id="feed" class="feed"></ol></section>
+    <section>
+      <div class="feed-head"><h2>Activity</h2><span class="feed-tools"><button id="verify" class="ghost small" type="button">Verify history</button><a id="download" class="small-link" href="#" download>Download</a></span></div>
+      <p id="verify-out" class="hint"></p>
+      <ol id="feed" class="feed"></ol>
+    </section>
   </div>
 </section>`,
   });
@@ -132,4 +137,32 @@ code.url{display:block;font-family:ui-monospace,Menlo,monospace;font-size:12px;b
 .warn{background:#fff9db;border:1px solid #ffe066;border-radius:10px;padding:10px 14px;font-size:14px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:860px){.grid2{grid-template-columns:1fr}}
 .members span{display:inline-flex;gap:6px;align-items:center;margin:0 10px 6px 0}
+.jstep{display:grid;grid-template-columns:30px 1fr;gap:10px;margin:16px 0 0}
+.jnum{width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:700;font-size:13px}
+.jstep h4{margin:3px 0 6px;font-size:15px}
+.plain{margin:6px 0 8px 18px;padding:0}.plain li{margin:3px 0}
+pre.exact{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#f1f0ec;padding:10px 12px;border-radius:8px;max-height:340px;overflow:auto;margin:8px 0}
+details.more{margin:6px 0}details.more summary{cursor:pointer;color:var(--acc);font-size:14px}
+.tools-list{margin:8px 0 0 18px;padding:0;font-size:14px}.tools-list li{margin:4px 0}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:10px 0 4px}
+.seg-btn{background:#fff;color:var(--ink);border-radius:0;font-weight:500;padding:6px 12px;border-right:1px solid var(--line)}
+.seg-btn:last-child{border-right:0}.seg-btn.on{background:var(--ink);color:#fff}
+.app-steps{margin-top:6px}
+.contrib{margin:4px 0 0}
+.metric{display:grid;grid-template-columns:190px 1fr;gap:12px;align-items:center;margin:7px 0;font-size:13px}
+.bar{display:flex;height:12px;border-radius:4px;overflow:hidden;background:#efede7;gap:2px}
+.bar span{display:block;height:100%;min-width:3px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;margin:4px 0 6px}
+table.who{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+table.who th{text-align:left;color:var(--mute);font-weight:600;font-size:12px;border-bottom:1px solid var(--line);padding:5px 8px;white-space:nowrap}
+table.who td{border-bottom:1px solid var(--line);padding:6px 8px}
+table.who td.n{text-align:right;font-variant-numeric:tabular-nums}
+.who-wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px}
+.sw{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+.m0{background:#3b5bdb}.m1{background:#e8590c}.m2{background:#2b8a3e}.m3{background:#ae3ec9}.m4{background:#0c8599}.m5{background:#d6336c}.m6{background:#f59f00}.m7{background:#5c940d}
+.feed-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.feed-tools{display:flex;gap:10px;align-items:center}
+.small-link{font-size:12px;color:var(--mute)}
+.ok-text{color:var(--ok)}.bad-text{color:#c92a2a}
+@media(max-width:860px){.metric{grid-template-columns:1fr;gap:3px}}
 `;

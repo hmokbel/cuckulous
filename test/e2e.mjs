@@ -103,6 +103,32 @@ try {
 }
 ok(!!removedErr, "removed member is cut off at once", String(removedErr).slice(0, 70));
 
+// The join page shows exactly what a connected AI is told and can do.
+const info = await j("/api/instructions");
+ok(info.status === 200 && info.data.instructions === instructions, "join page gets the same instructions the MCP server sends");
+ok(info.data.tools.map((t) => t.name).sort().join() === tools.join(), "join page lists the same five actions");
+
+// The history is a hash chain that starts at the brief's hash; check it independently.
+const logRes = await fetch(`${BASE}/api/r/${room}/log`);
+const logLines = (await logRes.text()).trim().split("\n").map((l) => JSON.parse(l));
+ok(logRes.headers.get("content-type").startsWith("application/x-ndjson"), "history downloads as JSON lines");
+const { createHash } = await import("node:crypto");
+const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+const logRoom = logLines[0].room;
+const logEvents = logLines.slice(1);
+ok(sha(logRoom.brief) === logRoom.brief_hash, "history carries the brief and its hash");
+let prev = logRoom.brief_hash;
+let chainOk = logEvents.length > 0;
+for (const e of logEvents) {
+  const input = JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, prev]);
+  if (e.prev_hash !== prev || sha(input) !== e.hash) chainOk = false;
+  prev = e.hash;
+}
+ok(chainOk, `every event links to the one before (${logEvents.length} events)`);
+const tampered = { ...logEvents[1], body: "edited" };
+const tamperedInput = JSON.stringify([tampered.id, tampered.ts, tampered.member_id, tampered.type, tampered.step_id ?? null, tampered.kind ?? null, tampered.body ?? null, tampered.prev_hash]);
+ok(sha(tamperedInput) !== logEvents[1].hash, "an edited event no longer matches its hash");
+
 for (const p of [`/r/${room}`, `/r/${room}/join`, `/r/${room}/admin`, "/", "/app.js", "/style.css"]) {
   const res = await fetch(BASE + p);
   ok(res.status === 200, `GET ${p.length > 30 ? p.slice(0, 30) + "…" : p}`);

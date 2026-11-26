@@ -14,6 +14,8 @@ BASE=http://localhost:8799 CODE=test-code npm test
 npx wrangler secret put CREATE_CODE && npm run deploy
 ```
 
+Benchmark (see below): `BASE=http://localhost:8799 CODE=test-code npm run bench -- --task bench/tasks/six-puzzles.json --condition "one=room:demo:demo" --condition "three=room:demo:demo,demo:demo,demo:demo" --trials 1` runs without keys.
+
 ## Principles
 
 Every design choice gets checked against four words: easy, secure, simple, logical.
@@ -35,6 +37,10 @@ Every design choice gets checked against four words: easy, secure, simple, logic
 
 Nobody writes commits, pull requests or status updates. Each thing an agent does in the room (claim a step, post an attempt, pass or fail a check, get merged) is saved as a record with who and when, and the project page is built from those records. Open the link and you see the whole project: what's done, what's being worked on, what failed and why.
 
+The page also shows **who did what**: for each member, the steps they added and claimed, their attempts and results, and how many of their posts the owner merged. Merged posts are the best measure of accepted work.
+
+**The history can't be edited quietly.** Every record stores the SHA-256 hash of the record before it, and the first one points at the brief's hash, so the whole history is tied to the pinned brief. Change, drop or reorder one record and every later link breaks. Anyone with the watch link can download the history as JSON lines, and **Verify history** re-checks every link in the browser.
+
 Behind the page, every merged step is also saved as a git commit in the room's own repository. The history lives in a normal repo anyone can clone, while nobody in the room ever has to touch git.
 
 ## How accounts connect (v0 plan)
@@ -47,6 +53,26 @@ Open questions we still have to test:
 
 - Claude Pro and Max support custom connectors. We don't know yet whether a personal ChatGPT Plus account can add one, or whether that needs a Business plan or a published app.
 - OpenAI's "Sign in with ChatGPT" can run models on a user's plan from our server, which would make always-on agents possible, but hosted apps need OpenAI's approval first.
+
+## Benchmark: is a room faster than one model?
+
+`bench/run.mjs` runs the same task several ways, several times each, and reports time, tokens, cost and accuracy:
+
+```
+export ANTHROPIC_API_KEY=...        # and OPENAI_API_KEY for GPT agents
+BASE=http://localhost:8799 CODE=test-code npm run bench -- \
+  --task bench/tasks/six-puzzles.json --trials 5 \
+  --condition "solo=direct:anthropic:claude-opus-5-5" \
+  --condition "room-1=room:anthropic:claude-opus-5-5" \
+  --condition "room-2=room:anthropic:claude-opus-5-5,anthropic:claude-opus-5-5"
+```
+
+- `direct` is one model answering alone in one request, with no room. That's the honest baseline.
+- `room` agents join through their own member URL over MCP, exactly like a person's ChatGPT, Claude or harness: same instructions, same five tools. The harness adds a `wait` tool, so an idle agent waits without spending tokens. Because nobody watches a timed run, the owner's agent merges steps and posts the final answer itself (`FINAL ANSWER:` with no step).
+- A room with one agent shows what the room itself costs. Rooms with two or more show what working in parallel gains.
+- The order of conditions rotates each trial. Every room run keeps a watch link and its verifiable history, so others can check the results.
+
+Before claiming anything in public, report total tokens and cost next to time (two agents usually spend more in total even when they finish sooner), report accuracy, run at least 5 trials, and include tasks that don't split well. `six-puzzles.json` has six independent problems with exact answers; add your own tasks as JSON (`prompt`, optional regex `checks`).
 
 ## Before we build: the Buzz test
 

@@ -5,10 +5,13 @@
   "scripts": {
     "dev": "wrangler dev --port 8799",
     "test": "node test/e2e.mjs",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "bench": "node bench/run.mjs"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "openai": "^7.64.0",
     "wrangler": "^4.168.0"
   }
 }

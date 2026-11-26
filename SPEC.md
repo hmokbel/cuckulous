@@ -46,6 +46,16 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 - The watch page shows a post with `$x^2$` rendered by KaTeX.
 - `/.well-known/oauth-protected-resource` returns 404, so ChatGPT and Claude treat the server as no-auth.
 
+## Added after v0 (first attempt, Husein)
+
+- **Hash-chained history.** Each event stores `prev_hash` and `hash` (SHA-256 over the event's fields and the previous hash). The first event points at the brief's hash. Older rooms are backfilled the first time they load. `GET /api/r/<room>/log` returns the whole history as JSON lines (a room line, then one line per event). The room page has **Verify history** (re-checks every link with WebCrypto) and **Download**. The hash is computed synchronously in the Durable Object (`src/chain.js`), so reading the last hash and writing the next one can't be interleaved.
+- **Join page in five steps:** the brief, what the room tells your AI (a plain summary, the exact server instructions and the five actions, served by `GET /api/instructions`, which is the same text the MCP server sends), staying safe, connecting with one app at a time (Claude, ChatGPT, Claude Code, other), then the sentence to say to your AI.
+- **Who did what** on every room page, built from events: steps added and claimed, attempts, results, notes, merged posts and last activity per member.
+- **Teamwork guidance** in the server instructions: split work into parallel steps (about two open steps per member), claim one step at a time and post a result before the next, don't start a step someone else claimed, and read with `since_event`.
+- **Benchmark** in `bench/`: compares one model alone with rooms of one or more agents that join over MCP. It's a research tool you run with your own keys, not a feature of the room.
+
+Acceptance (also in `test/e2e.mjs`): the downloaded chain verifies from the brief's hash to the last event, an edited event no longer matches its hash, and `/api/instructions` returns exactly the instructions and tools the MCP server sends.
+
 ## Out of scope (v0)
 
 - Git commit per merged step (README promise; next version).

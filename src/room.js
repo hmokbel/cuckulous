@@ -2,6 +2,7 @@
 // watch page and the history are built from the same log.
 import { DurableObject } from "cloudflare:workers";
 import { findSecret } from "./scan.js";
+import { chainHash } from "./chain.js";
 
 export const LIMITS = {
   title: 200,
@@ -29,8 +30,27 @@ export class Room extends DurableObject {
       "CREATE TABLE IF NOT EXISTS steps(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, detail TEXT, created_by INTEGER, created_at INTEGER, status TEXT, claimed_by INTEGER, merged_event INTEGER)",
     );
     this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT)",
+      "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT, prev_hash TEXT, hash TEXT)",
     );
+    // Rooms created before the hash chain existed get the columns and a backfill.
+    for (const col of ["prev_hash", "hash"]) {
+      try {
+        this.sql.exec(`ALTER TABLE events ADD COLUMN ${col} TEXT`);
+      } catch {
+        // column already there
+      }
+    }
+    if (this.sql.exec("SELECT COUNT(*) AS n FROM events WHERE hash IS NULL").one().n) this.rechain();
+  }
+
+  // Recomputes every hash in order. Only used to backfill older rooms.
+  rechain() {
+    let prev = this.meta("brief_hash") || "";
+    for (const e of this.sql.exec("SELECT * FROM events ORDER BY id").toArray()) {
+      const hash = chainHash(e, prev);
+      this.sql.exec("UPDATE events SET prev_hash = ?, hash = ? WHERE id = ?", prev, hash, e.id);
+      prev = hash;
+    }
   }
 
   // ---- helpers ----
@@ -51,17 +71,26 @@ export class Room extends DurableObject {
   step(id) {
     return this.sql.exec("SELECT * FROM steps WHERE id = ?", id).toArray()[0] || null;
   }
+  // Appends to the log. Synchronous on purpose: reading the last hash and
+  // writing the next one happen with no await in between (see chain.js).
   event(memberId, type, stepId = null, kind = null, body = null) {
+    const last = this.sql.exec("SELECT hash FROM events ORDER BY id DESC LIMIT 1").toArray()[0];
+    const prev = last ? last.hash : this.meta("brief_hash") || "";
+    const ts = Date.now();
     this.sql.exec(
-      "INSERT INTO events(ts, member_id, type, step_id, kind, body) VALUES (?, ?, ?, ?, ?, ?)",
-      Date.now(),
+      "INSERT INTO events(ts, member_id, type, step_id, kind, body, prev_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ts,
       memberId,
       type,
       stepId,
       kind,
       body,
+      prev,
     );
-    return this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
+    const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
+    const hash = chainHash({ id, ts, member_id: memberId, type, step_id: stepId, kind, body }, prev);
+    this.sql.exec("UPDATE events SET hash = ? WHERE id = ?", hash, id);
+    return id;
   }
   // Checks membership, rate limit and room size for any write.
   writer(keyHash) {
@@ -218,6 +247,26 @@ export class Room extends DurableObject {
   }
 
   // ---- reading ----
+  // The whole history, for download and independent verification.
+  async log() {
+    if (!this.exists()) return err("This room does not exist.");
+    return {
+      room: {
+        title: this.meta("title"),
+        brief: this.meta("brief"),
+        brief_hash: this.meta("brief_hash"),
+        created_at: Number(this.meta("created_at")),
+        members: this.sql
+          .exec("SELECT id, name, role, removed_at FROM members ORDER BY id")
+          .toArray()
+          .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at })),
+      },
+      events: this.sql
+        .exec("SELECT id, ts, member_id, type, step_id, kind, body, prev_hash, hash FROM events ORDER BY id")
+        .toArray(),
+    };
+  }
+
   async state(since = 0, tail = 0) {
     if (!this.exists()) return err("This room does not exist.");
     const members = this.sql

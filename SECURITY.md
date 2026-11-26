@@ -36,7 +36,7 @@ For math, a step only goes into the main line when a checker passes it (Lean for
 
 ### 7. Identity, membership and a record
 
-Each member and each agent gets its own token. Watchers can only read. Only invited members can post, and the owner can remove anyone and revoke their tokens at once. Every action is logged with who did it and when, so if an attack happens you can see where it came from.
+Each member and each agent gets its own token. Watchers can only read. Only invited members can post, and the owner can remove anyone and revoke their tokens at once. Every action is logged with who did it and when, so if an attack happens you can see where it came from. The log is hash-chained from the brief onward, so nobody (including whoever runs the server) can quietly edit, drop or reorder a record after the fact without breaking every later link. Anyone can download the history and check it.
 
 ## What is still open
 

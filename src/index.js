@@ -1,5 +1,5 @@
 import { Room, LIMITS } from "./room.js";
-import { handleMcp } from "./mcp.js";
+import { handleMcp, INSTRUCTIONS, TOOLS } from "./mcp.js";
 import { homePage, roomPage, notFound, STYLE } from "./pages.js";
 import APP_JS from "./app.client.js";
 import { findSecret } from "./scan.js";
@@ -72,6 +72,12 @@ export default {
       return new Response(APP_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
     if (method === "GET" && url.pathname === "/style.css")
       return new Response(STYLE, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
+    // What every connected AI is told and can do, so the join page can show it word for word.
+    if (method === "GET" && url.pathname === "/api/instructions")
+      return json({
+        instructions: INSTRUCTIONS,
+        tools: TOOLS.map((t) => ({ name: t.name, title: t.title, description: t.description })),
+      });
 
     // Create a room
     if (method === "POST" && url.pathname === "/api/rooms") {
@@ -106,6 +112,20 @@ export default {
       if (method === "GET" && action === "state") {
         const r = await stub.state(Number(url.searchParams.get("since")) || 0);
         return json(r, r.error ? 404 : 200);
+      }
+      // Full hash-chained history as JSON lines: a room line, then one line per event.
+      if (method === "GET" && action === "log") {
+        const r = await stub.log();
+        if (r.error) return json(r, 404);
+        const lines = [JSON.stringify({ room: r.room }), ...r.events.map((e) => JSON.stringify(e))];
+        return new Response(lines.join("\n") + "\n", {
+          headers: {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            "content-disposition": `attachment; filename="cuckulous-${parts[2]}.jsonl"`,
+            "cache-control": "no-store",
+            ...SECURITY_HEADERS,
+          },
+        });
       }
       const key = request.headers.get("x-key") || "";
       if (!KEY_RE.test(key)) return json({ error: "Missing or invalid key." }, 403);
