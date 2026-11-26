@@ -125,10 +125,8 @@
 
   // ---------- shared bits for every page ----------
   const TOPICS = [["math", "∑", "Math"], ["code", "💻", "Code"], ["science", "🔬", "Science"], ["writing", "✍️", "Writing"], ["other", "🎲", "Other"]];
-  const topicLabel = (t) => {
-    const x = TOPICS.find(([k]) => k === t) || TOPICS[TOPICS.length - 1];
-    return `${x[1]} ${x[2]}`;
-  };
+  // Plain words, like the original hallway: no emoji in labels.
+  const topicLabel = (t) => (TOPICS.find(([k]) => k === t) || TOPICS[TOPICS.length - 1])[2];
   function iconPicker(current, onPick) {
     const grid = h("div", { class: "icons" });
     let sel = current;
@@ -179,7 +177,7 @@
 
     // Topic chips, like the app's "for you · business · music" row.
     const chips = $("#topics");
-    const CHIPS = [["for-you", "✨ For you"], ["live", "🟢 Live now"], ...TOPICS.map(([k, e, l]) => [k, `${e} ${l}`])];
+    const CHIPS = [["for-you", "For you"], ["live", "Live now"], ...TOPICS.map(([k, , l]) => [k, l])];
     const drawChips = () => {
       chips.textContent = "";
       for (const [k, label] of CHIPS)
@@ -198,26 +196,27 @@
     const linkFor = (r) =>
       r.role === "owner" ? `/r/${r.id}/admin#${r.key}` : r.role === "member" ? `/r/${r.id}/join#${r.key}` : `/r/${r.id}`;
 
-    // One room card: topic and title on the left, the people (and their AIs) on the right.
+    // One room card, in the original hallway layout: overline, title, then two
+    // overlapping faces on the left with the names (and their AIs) beside them.
     function card(s) {
       const r = s.mine;
       const people = [...s.members].sort((a, b) => b.posted - a.posted || (a.role === "owner" ? -1 : 1));
       const roleWord = r ? (r.role === "owner" ? "you host" : r.role === "member" ? "you're in" : "watching") : null;
       const title = h("div", { class: "htitle" });
       title.textContent = s.title;
+      const shown = people.slice(0, 4);
       const el = h("a", { class: "hcard", href: r ? linkFor(r) : `/r/${s.id}` },
-        h("p", { class: "over" }, h("span", {}, topicLabel(s.topic)),
-          s.visibility === "private" ? h("span", { class: "lock" }, "· 🔒 private") : h("span", {}, "· 🌍 public"),
-          roleWord && h("span", {}, `· ${roleWord}`)),
-        h("div", { class: "hrow" },
-          h("div", { class: "hleft" }, title,
-            h("ul", { class: "names" }, ...people.slice(0, 3).map((m) =>
-              h("li", {}, h("span", { class: "nicon" }, iconFor(m.name, m.icon)), m.name, m.model && h("span", { class: "mdl" }, m.model), m.posted && h("span", { class: "bub" }, "💬")))),
+        h("p", { class: "over" }, h("span", { class: "house" }), [topicLabel(s.topic), s.visibility === "public" ? "public" : "private", roleWord].filter(Boolean).join(" · ")),
+        title,
+        h("div", { class: "hbody" },
+          h("div", { class: "stack" }, ...shown.slice(0, 2).map((m) => avatar(m.name, "", m.icon, m.model))),
+          h("div", { class: "hright" },
+            h("ul", { class: "names" }, ...shown.map((m) =>
+              h("li", {}, h("span", { class: "nm" }, m.name), m.posted && h("span", { class: "bub" }, "💬"), m.model && h("span", { class: "mdl" }, m.model))),
+              people.length > 4 && h("li", { class: "more-names" }, `+${people.length - 4} more`)),
             h("div", { class: "counts" },
               h("span", {}, `${s.members.length} 👤`), h("span", {}, `${s.post_count} 💬`), h("span", {}, `${s.done_count}/${s.step_count} ✅`),
-              !s.started ? h("span", { class: "wait" }, "⏳ waiting to start") : isLive(s) ? h("span", { class: "live" }, "● live") : h("span", {}, `${ago(s.last_ts)} ago`))),
-          h("div", { class: "cluster" }, ...people.slice(0, 4).map((m, i) => avatar(m.name, `p${i}`, m.icon, m.model)),
-            people.length > 4 && h("span", { class: "more" }, `+${people.length - 4}`))));
+              !s.started ? h("span", { class: "wait" }, "waiting to start") : isLive(s) ? h("span", { class: "live" }, "● live") : h("span", {}, `${ago(s.last_ts)} ago`)))));
       math(title);
       return el;
     }
@@ -249,7 +248,7 @@
         box.append(h("div", { class: "empty-hall" },
           h("div", { class: "big" }, nothingAtAll ? "🏠" : "🌾"),
           h("div", {}, nothingAtAll ? "The hallway is quiet." : "Nothing here yet."),
-          h("div", {}, nothingAtAll ? "Host a room, or open a link someone sent you." : "Try another topic, or host the first room.")));
+          h("div", {}, nothingAtAll ? "Start a room, or open a link someone sent you." : "Try another topic, or start the first room.")));
       }
     }
     renderHall();
@@ -264,10 +263,10 @@
         h("label", { class: "mode" }, h("input", { type: "radio", name, value, checked: checked ? "" : null }),
           h("span", {}, h("b", {}, title), h("span", { class: "hint" }, desc)));
       f.append(
-        h("h3", {}, "Host a room"),
+        h("h3", {}, "Start a room"),
         h("label", {}, "What's the problem?", h("input", { name: "title", required: true, maxlength: "200", placeholder: "Is 2^n + 1 ever a perfect cube?" })),
-        h("div", { class: "tpick" }, ...TOPICS.map(([k, e, l], i) =>
-          h("label", { class: "tpill" }, h("input", { type: "radio", name: "topic", value: k, checked: i === 0 ? "" : null }), h("span", {}, `${e} ${l}`)))),
+        h("div", { class: "tpick" }, ...TOPICS.map(([k, , l], i) =>
+          h("label", { class: "tpill" }, h("input", { type: "radio", name: "topic", value: k, checked: i === 0 ? "" : null }), h("span", {}, l)))),
         h("label", {}, "Brief", h("span", { class: "hint" }, "Everyone reads this before connecting their AI, and it can't be changed later. LaTeX works: $x^2$."),
           h("textarea", { name: "brief", required: true, maxlength: "8000", rows: "5", placeholder: "Problem: ...\n\nRules: break it into steps, claim before working, show every calculation, post results with a check." })),
         h("div", { class: "modes" }, h("div", { class: "mlabel" }, "Who can join?"),
@@ -705,7 +704,9 @@
       out.push(h("div", { class: "trow" }, avatarOf(m.id), h("span", { class: "tt" }, m.name, m.model ? h("div", { class: "ld" }, m.model) : null),
         h("span", { class: "tm" }, `${n} post${n === 1 ? "" : "s"} · ${merged} merged`)));
     }
-    out.push(h("button", { class: "ghost", type: "button", style: "margin-top:10px", onclick: breakdownSheet }, "Who did what, in numbers"));
+    out.push(h("div", { class: "team-actions" },
+      h("button", { class: "ghost", type: "button", onclick: () => { closeAll(); teamSheet(); } }, "How they're working together"),
+      h("button", { class: "ghost", type: "button", onclick: () => { closeAll(); breakdownSheet(); } }, "Who did what, in numbers")));
     const last = state.events[state.events.length - 1];
     out.push(h("p", { class: "muted", style: "margin-top:12px" },
       `${last ? `Last activity ${ago(last.ts)}${ago(last.ts) === "just now" ? "" : " ago"}` : ""} · brief version ${state.briefHash.slice(0, 8)}`));
@@ -1035,13 +1036,23 @@
     return { bars, marks, t0, t1, startAt, par, parMs, lanesIds, handoffs, crossChecks, models, proposer, firstTaker, weighedIn, postAuthor };
   }
 
+  // "How they're working together" lives in a sheet opened from Progress, so the
+  // room itself stays a stage and a floor. It re-renders live while open.
+  let teamBox = null;
+  function teamSheet() {
+    teamBox = h("div", { class: "teambox" });
+    openSheet(h("h3", {}, "How they're working together"), h("p", { class: "hint" }, "Built from the room's own record."), teamBox);
+    renderTeam();
+  }
   function renderTeam() {
-    const sec = $("#team-sec");
-    const box = $("#team");
+    if (!teamBox || !document.body.contains(teamBox)) return (teamBox = null);
+    const box = teamBox;
     const tw = teamwork();
-    sec.hidden = !tw;
-    if (!tw) return;
     box.textContent = "";
+    if (!tw) {
+      box.append(h("p", { class: "muted" }, "Nothing to show yet. Once AIs add, claim and post steps, their timeline shows up here."));
+      return;
+    }
     const span = tw.t1 - tw.t0;
     const pct = (t) => `${(100 * (t - tw.t0)) / span}%`;
     const width = (a, b) => `${Math.max(0.8, (100 * (b - a)) / span)}%`;
@@ -1149,7 +1160,7 @@
     if (state.steps.length) box.append(relay);
     box.append(h("div", { class: "team-actions" },
       h("button", { class: "ghost", type: "button", onclick: breakdownSheet }, "Who did what, in numbers")));
-    $("#team-meta").textContent = "from the room's record";
+    math(box);
   }
 
   // Per person and per model, from the same events.
@@ -1374,7 +1385,7 @@
     await poll();
     $("#over-text").textContent = problem || [
       topicLabel(state.topic),
-      state.visibility === "public" ? "🌍 public" : "🔒 private",
+      state.visibility === "public" ? "public" : "private",
       state.me ? (state.me.role === "owner" ? "you host" : `you're in as ${state.me.name}`) : mode === "invite" ? "you're invited" : "watching",
     ].join(" · ");
     bottomBar();
