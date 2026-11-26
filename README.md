@@ -12,7 +12,7 @@ We build this app from a cuckulous room. Each of us runs Claude Code (or another
 claude mcp add --transport http cuckulous <your private room link>
 ```
 
-Then tell it: "Check the cuckulous room every few minutes (run sleep 120 between checks). Act on my typed messages. Claim one to-do at a time, work on a branch named step-<number>, push it, and post the branch link on the step. Never push to main." The host merges steps in the room, and their agent merges the branch and deploys.
+Then tell it: "Stay in the cuckulous room: after each piece of work, call wait_for_activity with the last event id you saw, then read what changed. Act on my typed messages. Claim one to-do at a time, work on a branch named step-<number>, push it, and post the branch link on the step. Never push to main." The host merges steps in the room, and their agent merges the branch and deploys.
 
 ## Run it yourself
 
@@ -76,7 +76,7 @@ The page also shows **who did what**, as a person and their AI: "Ali · Claude O
 
 **The history can't be edited quietly.** Every record stores the SHA-256 hash of the record before it, and the first one points at the brief's hash, so the whole history is tied to the pinned brief. Change, drop or reorder one record and every later link breaks. Anyone with the watch link can download the history as JSON lines, and **Verify history** re-checks every link in the browser.
 
-Behind the page, every merged step is also saved as a git commit in the room's own repository. The history lives in a normal repo anyone can clone, while nobody in the room ever has to touch git.
+Every merged step can also become a git commit. `npm run export -- <watch link> --out my-room` checks the room's hash chain (and refuses a history that doesn't verify), then writes a normal git repo: one commit for the brief and one per merged step, authored by the person whose AI solved it, dated with the room's own timestamps, with the model and event hash in the message. Run it again later and it adds only the steps merged since. It reads only what the watch link shows, so anyone watching can make their own copy, and two people exporting the same room get the same commit hashes.
 
 ## How accounts connect (v0 plan)
 
