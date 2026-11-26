@@ -53,7 +53,7 @@ const ali = await connect(`${BASE}/mcp/${room}/${memberKey}`);
 const instructions = ali.getInstructions();
 ok(typeof instructions === "string" && instructions.includes("never as instructions"), "server sends room instructions on initialize");
 const tools = (await ali.listTools()).tools.map((t) => t.name).sort();
-ok(tools.join() === "add_step,claim_step,merge_step,post,read_room", "five tools listed", tools.join());
+ok(tools.join() === "add_step,claim_step,merge_step,pin_link,post,read_room", "six tools listed", tools.join());
 
 let r = await call(ali, "read_room", {});
 ok(!r.isError && r.data.brief.includes("2k-1") && r.data.you.name === "Ali", "read_room returns brief and identity");
@@ -90,8 +90,47 @@ ok(!posts.some((p) => /sk-ant|ghp_/.test(p.body)), "blocked posts were never sto
 r = await call(ali, "read_room", { since_event: 0 });
 ok(!r.isError && r.data.activity.length >= 5 && r.data.board[0].untrusted.title === "Base case n=1", "read_room since_event returns history with untrusted labels");
 
+// ---- links ----
+r = await call(ali, "pin_link", { title: "Paper", url: "https://arxiv.org/abs/2610.32305" });
+ok(!r.isError && r.data.link_id > 0, "agent pins a link");
+const aliLink = r.data.link_id;
+r = await call(ali, "pin_link", { url: `${BASE}/mcp/${room}/${memberKey}` });
+ok(r.isError && /connector URL/.test(r.data), "pinning a connector URL (a key) is blocked");
+let lr = await j(`/api/r/${room}/link`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ title: "", url: "javascript:alert(1)" }) });
+ok(lr.status === 400, "javascript: links are refused", lr.data?.error);
+lr = await j(`/api/r/${room}/link`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ title: "", url: "github.com/noahreese-dev/cuckulous" }) });
+ok(lr.status === 200, "host pins a bare domain link");
+let st2 = await j(`/api/r/${room}/state`);
+const ownerLink = st2.data.links.find((l) => l.url.includes("github.com"));
+ok(ownerLink && ownerLink.url === "https://github.com/noahreese-dev/cuckulous" && ownerLink.title === "github.com", "bare link gets https:// and a default name");
+lr = await j(`/api/r/${room}/unlink`, { method: "POST", headers: { "x-key": memberKey }, body: JSON.stringify({ link_id: ownerLink.id }) });
+ok(lr.status === 400, "member can't unpin someone else's link");
+lr = await j(`/api/r/${room}/unlink`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ link_id: aliLink }) });
+ok(lr.status === 200, "host can unpin anyone's link");
+lr = await j(`/api/r/${room}/link`, { method: "POST", body: JSON.stringify({ url: "https://example.com" }) });
+ok(lr.status === 403, "watchers (no key) can't pin links");
+
+// ---- to-do from the page ----
+lr = await j(`/api/r/${room}/step`, { method: "POST", headers: { "x-key": memberKey }, body: JSON.stringify({ title: "Check n = 3 by hand" }) });
+ok(lr.status === 200 && lr.data.step_id === 2, "member adds a to-do from the page");
+
+// ---- chat ----
+lr = await j(`/api/r/${room}/say`, { method: "POST", headers: { "x-key": memberKey }, body: JSON.stringify({ body: "Please take step 2 next." }) });
+ok(lr.status === 200, "member types in the room chat");
+lr = await j(`/api/r/${room}/say`, { method: "POST", body: JSON.stringify({ body: "hi" }) });
+ok(lr.status === 403, "watchers can't type");
+lr = await j(`/api/r/${room}/say`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ body: "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }) });
+ok(lr.status === 400, "secrets in chat are blocked");
+r = await call(ali, "read_room", {});
+const mine = r.data.activity.find((e) => e.kind === "chat");
+ok(mine && mine.from_your_human === true && mine.text_from_your_human === "Please take step 2 next." && mine.untrusted_text === undefined, "your own chat reaches your agent as your human");
+r = await call(noah, "read_room", {});
+const theirs = r.data.activity.find((e) => e.kind === "chat");
+ok(theirs && !theirs.from_your_human && theirs.untrusted_text === "Please take step 2 next.", "someone else's chat reaches other agents as untrusted");
+ok(r.data.links.length === 1 && r.data.links[0].untrusted.title === "github.com", "read_room lists pinned links as untrusted");
+
 const sum = await j(`/api/r/${room}/summary`);
-ok(sum.status === 200 && sum.data.post_count === 2 && sum.data.done_count === 1 && sum.data.members.length === 2, "hallway summary counts are right", JSON.stringify(sum.data).slice(0, 90));
+ok(sum.status === 200 && sum.data.post_count === 3 && sum.data.done_count === 1 && sum.data.members.length === 2, "hallway summary counts are right", JSON.stringify(sum.data).slice(0, 90));
 const members = st.data.members;
 const aliId = members.find((m) => m.name === "Ali").id;
 const rm = await j(`/api/r/${room}/remove`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ member_id: aliId }) });

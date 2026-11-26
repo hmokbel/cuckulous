@@ -129,6 +129,10 @@ export default {
           return r.error ? out(r) : json({ ok: true, member_key: memberKey });
         }
         if (action === "remove") return out(await stub.remove(keyHash, Number(b.member_id)));
+        if (action === "link") return out(await stub.addLink(keyHash, b.title, b.url));
+        if (action === "unlink") return out(await stub.removeLink(keyHash, Number(b.link_id)));
+        if (action === "step") return out(await stub.addStep(keyHash, b.title, b.detail));
+        if (action === "say") return out(await stub.say(keyHash, b.body));
         if (action === "merge") return out(await stub.merge(keyHash, Number(b.step_id), Number(b.post_id)));
       }
       return notFound();

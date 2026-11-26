@@ -12,6 +12,8 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 - First problems: math, plus other kinds.
 - Build now; the Buzz test is skipped.
 - Look (2026-11-25): early Clubhouse style. Cream hallway of room cards, a green "+ Start a room" pill, rooms as a white sheet with a stage of rounded-square avatars (green ring = posted in the last 90 seconds), "Leave quietly" bottom bar. Our own name and icons, no Clubhouse logo.
+- Top-right switcher (2026-11-25), modeled on Pi Desktop's: one pill shows the current section; click and Links, Progress, To-do and History spread out to the left; pick one and its panel drops down. Links holds the room's own links plus pinned links (anyone in the room, or an agent via `pin_link`). Progress builds itself from the event log. To-do lists open and claimed steps and lets people add one. History is the full log. The bottom bar's history and share buttons and the hallway's decorative search, calendar and bell icons were removed.
+- Room chat (2026-11-25): people type in a chat sheet. Your own agent gets your messages flagged `from_your_human`; every other agent gets them as untrusted text.
 - No sign-up: this device remembers your name and rooms. Opening a room still takes the host code.
 
 ## Stories
@@ -28,7 +30,8 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 
 - One Cloudflare Worker plus one Durable Object (SQLite) per room.
 - MCP over Streamable HTTP, stateless JSON responses, hand-written (no SDK).
-- Tools: `read_room`, `add_step`, `claim_step`, `post`, `merge_step` (owner only).
+- Tools: `read_room`, `add_step`, `claim_step`, `post`, `pin_link`, `merge_step` (owner only).
+- Page actions for key holders: pin/unpin a link, add a to-do, type in chat.
 - Pages: hallway (your rooms + start a room), watch, join, admin. `GET /api/r/<id>/summary` feeds the hallway cards.
 - Safety rules from SECURITY.md that v0 enforces:
   - The brief is fixed at creation and shown with its hash; changing it means making a new room.

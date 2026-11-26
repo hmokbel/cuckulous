@@ -11,6 +11,9 @@ export const LIMITS = {
   writesPerMinute: 30,
   events: 5000,
   members: 20,
+  links: 30,
+  linkTitle: 80,
+  url: 500,
 };
 export const POST_KINDS = ["attempt", "result", "question", "note"];
 
@@ -27,6 +30,9 @@ export class Room extends DurableObject {
     );
     this.sql.exec(
       "CREATE TABLE IF NOT EXISTS steps(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, detail TEXT, created_by INTEGER, created_at INTEGER, status TEXT, claimed_by INTEGER, merged_event INTEGER)",
+    );
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS links(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT, added_by INTEGER, created_at INTEGER, removed_at INTEGER)",
     );
     this.sql.exec(
       "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT)",
@@ -197,6 +203,19 @@ export class Room extends DurableObject {
     return { ok: true, post_id: id };
   }
 
+  // A person typing in the room's chat (from the web page, not through an agent).
+  async say(keyHash, body) {
+    const w = this.writer(keyHash);
+    if (w.error) return w;
+    body = String(body || "").trim();
+    if (!body) return err("Empty message.");
+    if (body.length > LIMITS.body) return err(`Messages are at most ${LIMITS.body} characters.`);
+    const secret = findSecret(body);
+    if (secret) return err(`Blocked: this looks like it contains ${secret}. Nothing was saved.`);
+    const id = this.event(w.member.id, "post", null, "chat", body);
+    return { ok: true, post_id: id };
+  }
+
   async merge(keyHash, stepId, postId) {
     const w = this.writer(keyHash);
     if (w.error) return w;
@@ -214,6 +233,54 @@ export class Room extends DurableObject {
       stepId,
     );
     this.event(w.member.id, "merged", stepId, null, String(postId));
+    return { ok: true };
+  }
+
+  // ---- pinned links ----
+  async addLink(keyHash, title, url) {
+    const w = this.writer(keyHash);
+    if (w.error) return w;
+    title = String(title || "").trim();
+    url = String(url || "").trim();
+    const early = findSecret(title + "\n" + url);
+    if (early) return err(`Blocked: this looks like it contains ${early}. Nothing was saved.`);
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return err("That doesn't look like a link.");
+    }
+    if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname.includes("."))
+      return err("Links must be web addresses (https://...).");
+    if (url.length > LIMITS.url) return err(`Links are at most ${LIMITS.url} characters.`);
+    if (!title) title = parsed.hostname.replace(/^www\./, "");
+    if (title.length > LIMITS.linkTitle) return err(`Link names are at most ${LIMITS.linkTitle} characters.`);
+    const secret = findSecret(title + "\n" + url);
+    if (secret) return err(`Blocked: this looks like it contains ${secret}. Nothing was saved.`);
+    const active = this.sql.exec("SELECT COUNT(*) AS n FROM links WHERE removed_at IS NULL").one().n;
+    if (active >= LIMITS.links) return err(`A room holds at most ${LIMITS.links} pinned links.`);
+    this.sql.exec(
+      "INSERT INTO links(title, url, added_by, created_at) VALUES (?, ?, ?, ?)",
+      title,
+      parsed.href,
+      w.member.id,
+      Date.now(),
+    );
+    const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
+    this.event(w.member.id, "link_added", null, null, title);
+    return { ok: true, link_id: id };
+  }
+
+  async removeLink(keyHash, linkId) {
+    const w = this.writer(keyHash);
+    if (w.error) return w;
+    const l = this.sql.exec("SELECT * FROM links WHERE id = ? AND removed_at IS NULL", linkId).toArray()[0];
+    if (!l) return err("No such link.");
+    if (w.member.role !== "owner" && l.added_by !== w.member.id)
+      return err("Only the host or the person who pinned it can remove a link.");
+    this.sql.exec("UPDATE links SET removed_at = ? WHERE id = ?", Date.now(), linkId);
+    this.event(w.member.id, "link_removed", null, null, l.title);
     return { ok: true };
   }
 
@@ -260,6 +327,9 @@ export class Room extends DurableObject {
       created_at: Number(this.meta("created_at")),
       members,
       steps,
+      links: this.sql
+        .exec("SELECT id, title, url, added_by, created_at FROM links WHERE removed_at IS NULL ORDER BY id")
+        .toArray(),
       events,
       last_event_id: last,
     };

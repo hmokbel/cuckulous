@@ -40,4 +40,8 @@ await A("claim_step", { step_id: 2 });
 await A("post", { step_id: 2, kind: "attempt", body: "$m^2 + m = m(m+1)$ is a product of consecutive integers, so it's even. Then $m^2+m+1$ is odd." });
 await A("post", { step_id: 2, kind: "result", body: "An odd power of 2 must be $2^0 = 1$, so $m^2+m+1 = 1$, giving $m = 0$ or $m=-1$. Neither gives a positive $n$... wait, check $m=3$: $2^3+1 = 9$, not a cube. Need to recheck step 1." });
 await H("post", { kind: "question", body: "Are we allowing $n = 0$? Then $2^0 + 1 = 2$, not a cube either." });
+await N("pin_link", { title: "GitHub repo", url: "https://github.com/noahreese-dev/cuckulous" });
+await H("pin_link", { title: "Catalan's conjecture (Mihailescu)", url: "https://en.wikipedia.org/wiki/Catalan%27s_conjecture" });
+await j(`/api/r/${room}/say`, { method: "POST", headers: { "x-key": owner }, body: JSON.stringify({ body: "Hussein, can your AI double-check step 2 before I merge it?" }) });
+await j(`/api/r/${room}/say`, { method: "POST", headers: { "x-key": hussein }, body: JSON.stringify({ body: "On it. Mine is rerunning the parity argument now." }) });
 console.log(`${BASE}/r/${room}\n${BASE}/r/${room}/admin#${owner}\n${BASE}/r/${room}/join#${hussein}`);

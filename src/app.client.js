@@ -221,7 +221,7 @@
   // =====================================================================
   // ROOM (watch / join / admin)
   // =====================================================================
-  const state = { members: [], steps: [], events: [], last: 0, loaded: false, me: null, brief: "" };
+  const state = { members: [], steps: [], links: [], events: [], last: 0, loaded: false, me: null, brief: "", briefHash: "" };
   const byId = () => Object.fromEntries(state.members.map((m) => [m.id, m]));
   const nameOf = (id) => byId()[id]?.name || "?";
   const isOwner = () => mode === "admin" && state.me?.role === "owner";
@@ -319,7 +319,218 @@
     nameInput.focus();
   }
 
-  function historySheet() {
+  // ---------- top-right switcher: Links / Progress / To-do / History ----------
+  const SECTIONS = [
+    { id: "links", ic: "🔗", name: "Links" },
+    { id: "progress", ic: "📈", name: "Progress" },
+    { id: "todo", ic: "✅", name: "To-do" },
+    { id: "history", ic: "📜", name: "History" },
+  ];
+  const sw = { open: false, panel: false, cur: SECTIONS.some((x) => x.id === localStorage.getItem("cuck.tab")) ? localStorage.getItem("cuck.tab") : "progress" };
+  const canWrite = () => !!state.me;
+
+  function buildSwitcher() {
+    const box = $("#tsw");
+    box.textContent = "";
+    for (const sec of SECTIONS) {
+      box.append(h("button", { class: "tsw-it", type: "button", "data-id": sec.id, "aria-label": sec.name, onclick: (e) => { e.stopPropagation(); pick(sec.id); } },
+        h("span", { class: "ldot", hidden: true }),
+        h("span", { class: "ic" }, sec.ic),
+        h("span", { class: "nm" }, sec.name),
+        h("span", { class: "chev" }, "⌄")));
+    }
+    layout();
+  }
+  function layout() {
+    const box = $("#tsw");
+    box.classList.toggle("open", sw.open); // set first: open pills can be narrower, and we measure them below
+    const items = [...box.children];
+    const curIdx = SECTIONS.findIndex((x) => x.id === sw.cur);
+    let acc = 0;
+    const off = [];
+    for (let i = items.length - 1; i >= 0; i--) {
+      off[i] = acc;
+      acc += items[i].offsetWidth + 6;
+    }
+    items.forEach((it, i) => {
+      const on = i === curIdx;
+      it.classList.toggle("cur", on);
+      it.querySelector(".chev").style.display = on ? "" : "none";
+      it.style.transitionDelay = sw.open ? `${Math.abs(i - curIdx) * 28}ms` : "0ms";
+      it.style.transform = sw.open ? `translateX(${-off[i]}px)` : "translateX(0)";
+      it.setAttribute("aria-expanded", String(on && sw.panel));
+    });
+    box.classList.toggle("open", sw.open);
+    $(".roombar").classList.toggle("open", sw.open);
+    const live = state.events.length && Date.now() - state.events[state.events.length - 1].ts < 10 * 60 * 1000;
+    items.forEach((it, i) => (it.querySelector(".ldot").hidden = !(live && i === curIdx && !sw.open)));
+  }
+  function pick(id) {
+    if (!sw.open) {
+      if (id !== sw.cur) return;
+      sw.open = true;
+      sw.panel = true;
+    } else if (id === sw.cur && sw.panel) {
+      sw.open = false;
+      sw.panel = false;
+    } else {
+      sw.cur = id;
+      localStorage.setItem("cuck.tab", id);
+      sw.open = false;
+      sw.panel = true;
+    }
+    layout();
+    renderPanel(true);
+  }
+  function closeAll() {
+    if (!sw.open && !sw.panel) return;
+    sw.open = false;
+    sw.panel = false;
+    layout();
+    renderPanel(true);
+  }
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#tsw, #tpanel, #sheet-root")) return;
+    closeAll();
+  });
+  document.addEventListener("keydown", (e) => e.key === "Escape" && !$("#sheet-root").children.length && closeAll());
+
+  const row = (icon, title, sub, ...actions) =>
+    h("div", { class: "lrow" }, h("span", { class: "lic" }, icon),
+      h("div", { class: "lmain" }, title, sub && h("div", { class: "ld" }, sub)), ...actions);
+  const mini = (label, onclick, cls = "mini") => h("button", { class: cls, type: "button", onclick }, label);
+  const lastPostOf = (step) => state.events.find((e) => e.id === step.merged_event);
+
+  function linksView() {
+    const me = state.me;
+    const out = [h("h4", {}, "Room links"),
+      row("👀", h("span", { class: "lt" }, "Watch link"), "Anyone can watch. Nobody can post.", mini("Copy", () => copy(`${origin}/r/${roomId}`)))];
+    if (me) {
+      out.push(row("🔌", h("span", { class: "lt" }, "Your AI's link"), "Private. It works as your key.",
+        mini("Setup", () => connectSheet(`${origin}/mcp/${roomId}/${key}`)),
+        mini("Copy", () => copy(`${origin}/mcp/${roomId}/${key}`))));
+    }
+    if (isOwner()) out.push(row("➕", h("span", { class: "lt" }, "Invite someone"), "Make a private join link.", mini("Open", inviteSheet)));
+    out.push(h("h4", {}, "Pinned"));
+    if (!state.links.length) out.push(h("p", { class: "muted" }, "Nothing pinned yet. Pin the repo, the live site or a paper so everyone can find it."));
+    for (const l of state.links) {
+      const a = h("a", { class: "lt", href: l.url, target: "_blank", rel: "noopener noreferrer nofollow" });
+      a.textContent = l.title;
+      let host = "";
+      try { host = new URL(l.url).hostname.replace(/^www\./, ""); } catch {}
+      const mine = me && (isOwner() || l.added_by === me.id);
+      out.push(row("📎", a, `${host} · pinned by ${nameOf(l.added_by)}`,
+        mini("Copy", () => copy(l.url)),
+        mine && mini("✕", async () => {
+          if (!confirm(`Unpin "${l.title}"?`)) return;
+          try {
+            await api(`/api/r/${roomId}/unlink`, { method: "POST", ...withKey, body: JSON.stringify({ link_id: l.id }) });
+            poll();
+          } catch (x) { alert(x.message); }
+        }, "mini x")));
+    }
+    if (canWrite()) {
+      const t = h("input", { placeholder: "Name (optional), e.g. GitHub repo", maxlength: "80" });
+      const u = h("input", { placeholder: "https://…", inputmode: "url", autocomplete: "off" });
+      const err = h("p", { class: "error" });
+      const f = h("form", { class: "addform" }, t, u, h("button", { class: "go", type: "submit" }, "Pin link"), err);
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        err.textContent = "";
+        try {
+          await api(`/api/r/${roomId}/link`, { method: "POST", ...withKey, body: JSON.stringify({ title: t.value, url: u.value }) });
+          t.value = u.value = "";
+          await poll();
+          renderPanel(true);
+        } catch (x) { err.textContent = x.message; }
+      });
+      out.push(f);
+    } else {
+      out.push(h("p", { class: "muted" }, "Only people in the room can pin links."));
+    }
+    return out;
+  }
+
+  function progressView() {
+    const steps = state.steps;
+    const done = steps.filter((x) => x.status === "done");
+    const claimed = steps.filter((x) => x.status === "claimed");
+    const open = steps.filter((x) => x.status === "open");
+    const pct = steps.length ? Math.round((done.length / steps.length) * 100) : 0;
+    const posts = state.events.filter((e) => e.type === "post");
+    const title = (st) => { const t = h("span", { class: "tt" }); t.textContent = st.title; return t; };
+    const out = [
+      h("div", { class: "pct" }, h("b", {}, `${pct}%`), h("span", {}, steps.length ? `${done.length} of ${steps.length} steps merged` : "No steps yet")),
+      h("div", { class: "bar" }, h("span", { style: `width:${pct}%` })),
+      h("div", { class: "tiles" },
+        h("div", { class: "tile" }, h("b", {}, done.length), h("span", {}, "Merged")),
+        h("div", { class: "tile" }, h("b", {}, claimed.length), h("span", {}, "In progress")),
+        h("div", { class: "tile" }, h("b", {}, open.length), h("span", {}, "Open"))),
+    ];
+    out.push(h("h4", {}, "Done"));
+    if (!done.length) out.push(h("p", { class: "muted" }, "Nothing merged yet."));
+    for (const st of done) {
+      const p = lastPostOf(st);
+      out.push(h("button", { class: "trow", type: "button", onclick: () => goToStep(st.id) },
+        h("span", { class: "check done" }, "✓"), title(st), h("span", { class: "tm" }, p ? `${nameOf(p.member_id)} · ${ago(p.ts)}` : "")));
+    }
+    if (claimed.length) {
+      out.push(h("h4", {}, "Being worked on"));
+      for (const st of claimed)
+        out.push(h("button", { class: "trow", type: "button", onclick: () => goToStep(st.id) },
+          avatar(nameOf(st.claimed_by)), title(st), h("span", { class: "tm" }, nameOf(st.claimed_by))));
+    }
+    out.push(h("h4", {}, "Who's doing what"));
+    for (const m of state.members.filter((x) => !x.removed)) {
+      const n = posts.filter((p) => p.member_id === m.id).length;
+      const merged = done.filter((st) => lastPostOf(st)?.member_id === m.id).length;
+      out.push(h("div", { class: "trow" }, avatar(m.name), h("span", { class: "tt" }, m.name),
+        h("span", { class: "tm" }, `${n} post${n === 1 ? "" : "s"} · ${merged} merged`)));
+    }
+    const last = state.events[state.events.length - 1];
+    out.push(h("p", { class: "muted", style: "margin-top:12px" },
+      `${last ? `Last activity ${ago(last.ts)}${ago(last.ts) === "just now" ? "" : " ago"}` : ""} · brief version ${state.briefHash.slice(0, 8)}`));
+    return out;
+  }
+
+  function todoView() {
+    const out = [];
+    const open = state.steps.filter((x) => x.status === "open");
+    const claimed = state.steps.filter((x) => x.status === "claimed");
+    const done = state.steps.filter((x) => x.status === "done");
+    const item = (st, cls, right) => {
+      const t = h("span", { class: "tt" });
+      t.textContent = `#${st.id} ${st.title}`;
+      return h("button", { class: "trow", type: "button", onclick: () => goToStep(st.id) }, h("span", { class: `check ${cls}` }), t, h("span", { class: "tm" }, right));
+    };
+    out.push(h("h4", {}, `Open (${open.length})`));
+    if (!open.length) out.push(h("p", { class: "muted" }, "Nothing waiting. Add one below, or an agent will."));
+    open.forEach((st) => out.push(item(st, "", "free")));
+    if (claimed.length) {
+      out.push(h("h4", {}, `In progress (${claimed.length})`));
+      claimed.forEach((st) => out.push(item(st, "claimed", nameOf(st.claimed_by))));
+    }
+    if (done.length) out.push(h("p", { class: "muted", style: "margin-top:10px" }, `${done.length} done. See Progress.`));
+    if (canWrite()) {
+      const t = h("input", { placeholder: "Add a to-do, e.g. Check the case n = 3", maxlength: "200" });
+      const err = h("p", { class: "error" });
+      const f = h("form", { class: "addform" }, t, h("button", { class: "go", type: "submit" }, "Add to-do"), err);
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        err.textContent = "";
+        try {
+          await api(`/api/r/${roomId}/step`, { method: "POST", ...withKey, body: JSON.stringify({ title: t.value }) });
+          t.value = "";
+          await poll();
+          renderPanel(true);
+        } catch (x) { err.textContent = x.message; }
+      });
+      out.push(f);
+    }
+    return out;
+  }
+
+  function historyView() {
     const verb = (e) => ({
       created: "opened the room",
       invited: `invited ${nameOf(Number(e.body))}`,
@@ -328,30 +539,118 @@
       claimed: `claimed step #${e.step_id}`,
       merged: `merged step #${e.step_id}`,
       post: `posted ${e.kind}${e.step_id ? ` on #${e.step_id}` : ""}`,
+      link_added: "pinned a link",
+      link_removed: "unpinned a link",
     })[e.type] || e.type;
     const feed = h("ol", { class: "feed" });
     for (const e of [...state.events].reverse().slice(0, 300)) {
       feed.append(h("li", {}, avatar(nameOf(e.member_id)),
         h("div", { style: "flex:1;min-width:0" },
           h("div", {}, h("strong", {}, nameOf(e.member_id)), " ", verb(e), " ", h("span", { class: "when" }, ago(e.ts))),
-          e.type === "post" || e.type === "step_added" ? text(e.body, "text ftext") : null)));
+          ["post", "step_added", "link_added", "link_removed"].includes(e.type) ? text(e.body, "text ftext") : null)));
     }
-    openSheet(h("h3", {}, "History"), h("p", { class: "hint" }, "Everything that happened in this room, newest first."), feed);
+    return [feed];
+  }
+
+  function renderPanel(force = false) {
+    const panel = $("#tpanel");
+    if (!sw.panel) {
+      panel.hidden = true;
+      return;
+    }
+    // Don't wipe something the user is typing.
+    if (!force && panel.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+    const view = { links: linksView, progress: progressView, todo: todoView, history: historyView }[sw.cur];
+    const wasHidden = panel.hidden;
+    panel.textContent = "";
+    panel.append(...view());
+    panel.hidden = false;
+    if (wasHidden) {
+      panel.style.animation = "none";
+      void panel.offsetWidth;
+      panel.style.animation = "";
+    }
+    math(panel);
+  }
+
+  function goToStep(id) {
+    closeAll();
+    const el = document.querySelector(`[data-step="${id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+  }
+
+  // ---------- chat: people type, agents read it ----------
+  let chatList = null;
+  function chatItems() {
+    return state.events.filter((e) => e.type === "post" && !e.step_id);
+  }
+  function fillChat() {
+    if (!chatList || !document.body.contains(chatList)) return (chatList = null);
+    const atBottom = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 40;
+    chatList.textContent = "";
+    const items = chatItems();
+    if (!items.length) chatList.append(h("p", { class: "muted" }, "No messages yet. Say what you want built; your AI reads it the next time it checks the room."));
+    for (const p of items) {
+      const human = p.kind === "chat";
+      chatList.append(h("div", { class: `post ${human ? "human" : ""}` }, avatar(nameOf(p.member_id)),
+        h("div", { class: "bubble" },
+          h("div", { class: "by" }, nameOf(p.member_id), h("span", { class: `kind ${p.kind}` }, human ? "typed" : `AI · ${p.kind}`), h("span", {}, ago(p.ts))),
+          text(p.body))));
+    }
+    math(chatList);
+    if (atBottom) chatList.scrollTop = chatList.scrollHeight;
+  }
+  function chatSheet() {
+    chatList = h("div", { class: "chatlist" });
+    const parts = [h("h3", {}, "Room chat"),
+      h("p", { class: "hint" }, "Type to the room. Your own AI treats your messages as instructions from you; everyone else's AI reads them as information."),
+      chatList];
+    if (state.me) {
+      const input = h("textarea", { rows: "2", maxlength: "8000", placeholder: "e.g. Add a dark mode toggle to the hallway" });
+      const err = h("p", { class: "error" });
+      const f = h("form", { class: "composer" }, input, h("button", { class: "go", type: "submit" }, "Send"), err);
+      const send = async () => {
+        if (!input.value.trim()) return;
+        err.textContent = "";
+        try {
+          await api(`/api/r/${roomId}/say`, { method: "POST", ...withKey, body: JSON.stringify({ body: input.value }) });
+          input.value = "";
+          await poll();
+          fillChat();
+          chatList.scrollTop = chatList.scrollHeight;
+        } catch (x) { err.textContent = x.message; }
+      };
+      f.addEventListener("submit", (e) => { e.preventDefault(); send(); });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+      parts.push(f);
+    } else {
+      parts.push(h("p", { class: "muted" }, "You're watching. Only people in the room can type."));
+    }
+    openSheet(...parts);
+    fillChat();
+    chatList.scrollTop = chatList.scrollHeight;
+    localStorage.setItem(`cuck.chatseen.${roomId}`, String(chatItems().at(-1)?.id || 0));
+    bottomBar();
   }
 
   function bottomBar() {
     const right = $("#bb-right");
     right.textContent = "";
     const round = (label, title, onclick, cls = "round") => h("button", { class: cls, type: "button", title, "aria-label": title, onclick }, label);
-    right.append(round("📜", "History", historySheet));
+    const seen = Number(localStorage.getItem(`cuck.chatseen.${roomId}`) || 0);
+    const unread = chatList ? 0 : chatItems().filter((e) => e.id > seen).length;
+    const chatBtn = round("💬", "Room chat", chatSheet);
+    if (unread) chatBtn.append(h("span", { class: "badge" }, unread > 9 ? "9+" : unread));
+    right.append(chatBtn);
     if (isOwner()) {
       right.append(round("🔌", "Connect my AI", () => connectSheet(`${origin}/mcp/${roomId}/${key}`)));
       right.append(round("+", "Invite people", inviteSheet, "round plus"));
     } else if (mode === "join" && state.me) {
-      right.append(round("🔗", "Copy watch link", () => copy(`${origin}/r/${roomId}`, "Watch link copied")));
       right.append(round("🔌", "Connect my AI", () => connectSheet(`${origin}/mcp/${roomId}/${key}`), "round plus"));
-    } else {
-      right.append(round("🔗", "Copy watch link", () => copy(`${origin}/r/${roomId}`, "Watch link copied")));
     }
   }
 
@@ -393,7 +692,7 @@
       return h("div", { class: `post ${merged ? "merged" : ""}` },
         avatar(nameOf(p.member_id)),
         h("div", { class: "bubble" },
-          h("div", { class: "by" }, nameOf(p.member_id), h("span", { class: `kind ${p.kind}` }, p.kind), merged && h("span", {}, "✅ merged"), h("span", {}, ago(p.ts)),
+          h("div", { class: "by" }, nameOf(p.member_id), h("span", { class: `kind ${p.kind}` }, p.kind === "chat" ? "typed" : p.kind), merged && h("span", {}, "✅ merged"), h("span", {}, ago(p.ts)),
             isOwner() && step && step.status !== "done" && h("button", {
               class: "merge-btn", type: "button",
               onclick: async () => {
@@ -409,7 +708,7 @@
     for (const s of steps) {
       const title = h("span", { class: "st" });
       title.textContent = s.title;
-      const card = h("div", { class: `step ${s.status}` },
+      const card = h("div", { class: `step ${s.status}`, "data-step": String(s.id) },
         h("div", { class: "step-top" }, h("span", { class: "sid" }, `#${s.id}`), title,
           h("span", { class: `chip ${s.status}` },
             s.status === "claimed" ? `${nameOf(s.claimed_by)} is on it` : s.status === "done" ? "merged" : "open")),
@@ -419,7 +718,8 @@
     }
     const loose = posts.filter((p) => !p.step_id);
     if (loose.length) {
-      const card = h("div", { class: "step" }, h("div", { class: "step-top" }, h("span", { class: "st" }, "Open floor")));
+      const card = h("div", { class: "step" }, h("div", { class: "step-top" }, h("span", { class: "st" }, "Chat"),
+        h("button", { class: "mini", type: "button", onclick: chatSheet }, "Open chat")));
       loose.forEach((p) => card.append(postEl(p, null)));
       board.append(card);
     }
@@ -427,6 +727,9 @@
     math(board);
     $("#meta").textContent = `${state.steps.filter((s) => s.status === "done").length}/${state.steps.length} steps merged · ${posts.length} posts`;
     bottomBar();
+    layout();
+    renderPanel();
+    fillChat();
   }
 
   async function poll() {
@@ -442,13 +745,15 @@
           $("#brief").textContent = d.brief;
           math($("#brief"));
           $("#hash").textContent = d.brief_hash.slice(0, 8);
+          state.briefHash = d.brief_hash;
           state.loaded = true;
           changed = true;
         }
         const membersChanged = JSON.stringify(d.members) !== JSON.stringify(state.members);
-        const stepsChanged = JSON.stringify(d.steps) !== JSON.stringify(state.steps);
+        const stepsChanged = JSON.stringify(d.steps) !== JSON.stringify(state.steps) || JSON.stringify(d.links) !== JSON.stringify(state.links);
         state.members = d.members;
         state.steps = d.steps;
+        state.links = d.links || [];
         if (d.events.length) {
           state.events.push(...d.events);
           state.last = d.events[d.events.length - 1].id;
@@ -464,6 +769,7 @@
 
   (async () => {
     $("#brief-btn").addEventListener("click", () => $("#brief-btn").classList.toggle("open"));
+    buildSwitcher();
     if (mode === "admin" || mode === "join") {
       if (!key) {
         $("#over-text").textContent = "this link is missing its key";

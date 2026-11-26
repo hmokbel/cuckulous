@@ -29,23 +29,14 @@ function shell({ title, mode, room = "", body }) {
 </html>`;
 }
 
-const ICON = {
-  search: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.5-4.5"/></svg>`,
-  bell: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>`,
-  cal: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>`,
-};
-
 export const homePage = () =>
   shell({
     title: "cuckulous",
     mode: "home",
     body: `
 <header class="topbar">
-  <span class="icon-btn" aria-hidden="true">${ICON.search}</span>
   <span class="wordmark">cuckulous</span>
   <div class="top-right">
-    <span class="icon-btn" aria-hidden="true">${ICON.cal}</span>
-    <span class="icon-btn" aria-hidden="true">${ICON.bell}</span>
     <button class="me" id="me" type="button" title="Your name"></button>
   </div>
 </header>
@@ -64,8 +55,9 @@ export const roomPage = (room, mode) =>
     body: `
 <header class="roombar">
   <a href="/" class="back">⌄ Hallway</a>
-  <span class="live-pill"><span class="dot"></span> live</span>
+  <div class="tsw" id="tsw"></div>
 </header>
+<div class="tpanel" id="tpanel" hidden></div>
 <main class="roomsheet">
   <p class="over" id="over"><span class="house"></span><span id="over-text">room</span></p>
   <h1 class="rtitle" id="title">Loading…</h1>
@@ -155,7 +147,55 @@ a{color:inherit}
 /* room */
 .roombar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px}
 .back{text-decoration:none;font-weight:800;font-size:16px}
-.live-pill{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:13px;color:var(--green)}
+/* top-right switcher: one pill; click and the sections spread out to the left */
+.roombar{position:sticky;top:0;z-index:30;background:var(--hall)}
+.back{transition:opacity .2s}
+.roombar.open .back{opacity:0;pointer-events:none}
+.tsw{position:relative;height:36px;flex:1;display:flex;justify-content:flex-end}
+.tsw-it{position:absolute;right:0;top:0;height:36px;display:inline-flex;align-items:center;gap:6px;padding:0 13px;border-radius:999px;background:var(--card);font-weight:800;font-size:14px;white-space:nowrap;box-shadow:0 1px 0 rgba(0,0,0,.05);transition:transform .45s cubic-bezier(.32,.72,0,1),opacity .25s ease,background .15s;will-change:transform}
+.tsw-it .ic{font-size:14px}
+.tsw-it .chev{font-size:11px;color:var(--mute);transition:transform .3s}
+.tsw-it:not(.cur){opacity:0;pointer-events:none}
+.tsw.open .tsw-it{opacity:1;pointer-events:auto}
+.tsw.open .tsw-it.cur{background:var(--ink);color:#fff}
+.tsw.open .tsw-it.cur .chev{transform:rotate(180deg);color:#fff}
+.tsw-it .ldot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:blink 2s infinite}
+.tsw-it.cur{z-index:2}
+@media (max-width:480px){.tsw-it{padding:0 12px;font-size:13.5px}.tsw.open .tsw-it .ic{display:none}}
+.tpanel{position:fixed;top:58px;right:max(12px,calc(50% - 298px));width:min(calc(100vw - 24px),440px);max-height:calc(100vh - 150px);overflow:auto;background:var(--card);border-radius:24px;box-shadow:0 18px 50px rgba(30,25,10,.18),0 0 0 1px var(--line);padding:18px 18px 20px;z-index:29;animation:drop .28s cubic-bezier(.32,.72,0,1)}
+@keyframes drop{from{opacity:0;transform:translateY(-8px) scale(.98)}}
+.tpanel h4{font-size:13px;font-weight:800;color:var(--mute);margin:16px 0 8px;text-transform:none}
+.tpanel h4:first-child{margin-top:0}
+.lrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.lrow .lic{width:34px;height:34px;border-radius:38%;background:var(--hall);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.lrow .lmain{flex:1;min-width:0}
+.lrow .lt{font-weight:800;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+.lrow .ld{font-size:12px;font-weight:700;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini{background:var(--hall);font-weight:800;font-size:12px;padding:5px 10px;border-radius:999px;flex:none}
+.mini.x{color:var(--red)}
+.addform{display:grid;gap:8px;margin-top:12px}
+.addform input{font:inherit;font-weight:600;padding:10px 12px;border:0;border-radius:12px;background:var(--hall);width:100%;outline:none}
+.addform input:focus{box-shadow:0 0 0 2px var(--green)}
+.addform .go{margin-top:0;padding:11px;font-size:15px}
+.bar{height:12px;border-radius:99px;background:var(--hall);overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--green);border-radius:99px;transition:width .6s cubic-bezier(.32,.72,0,1)}
+.pct{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.pct b{font-size:34px;font-weight:900;letter-spacing:-.02em}
+.pct span{font-weight:700;color:var(--mute)}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0 4px}
+.tile{background:var(--hall);border-radius:16px;padding:10px 12px}
+.tile b{display:block;font-size:22px;font-weight:900}
+.tile span{font-size:12px;font-weight:700;color:var(--mute)}
+.trow{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);width:100%;text-align:left}
+.trow .av{width:30px;height:30px;font-size:11px;flex:none}
+.trow .tt{flex:1;min-width:0;font-weight:700}
+.trow .tm{font-size:12px;font-weight:700;color:var(--mute);flex:none}
+.check{width:22px;height:22px;border-radius:7px;border:2px solid var(--line);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:13px;color:#fff}
+.check.done{background:var(--green);border-color:var(--green)}
+.check.claimed{border-color:#E8A33D}
+.muted{color:var(--mute);font-weight:700;font-size:14px}
+.flash{animation:flash 1.4s ease}
+@keyframes flash{0%,40%{box-shadow:0 0 0 3px var(--green)}100%{box-shadow:0 0 0 0 transparent}}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:blink 2s infinite}
 @keyframes blink{50%{opacity:.3}}
 .roomsheet{background:var(--card);border-radius:30px 30px 0 0;min-height:calc(100vh - 56px);padding:22px 20px 130px}
@@ -242,5 +282,13 @@ code.url{display:block;flex:1;min-width:0;font-family:ui-monospace,Menlo,monospa
 .feed .av{width:30px;height:30px;font-size:11px;flex:none}
 .feed .when{color:var(--mute);font-weight:700;font-size:12px}
 .feed .ftext{margin-top:3px;color:var(--ink2);max-height:7em;overflow:hidden}
+.chatlist{max-height:52vh;overflow:auto;margin:8px 0;padding-right:2px}
+.post.human .bubble{background:#EAF6EE}
+.kind.chat{background:#DDF3E5;color:var(--green-d)}
+.composer{display:grid;gap:8px;position:sticky;bottom:0;background:var(--card);padding-top:8px}
+.composer textarea{font:inherit;font-weight:600;padding:12px 14px;border:0;border-radius:14px;background:var(--hall);width:100%;outline:none;resize:none}
+.composer textarea:focus{box-shadow:0 0 0 2px var(--green)}
+.composer .go{margin-top:0}
+.step-top .mini{margin-left:auto}
 .toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);background:var(--ink);color:#fff;font-weight:800;padding:9px 18px;border-radius:999px;z-index:60;font-size:14px}
 `;

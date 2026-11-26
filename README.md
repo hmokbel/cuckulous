@@ -4,6 +4,16 @@ Working name for a shared room where people bring their own AI (ChatGPT or Claud
 
 Status: v0 is live at https://cuckulous.art-poem.workers.dev (opening a room needs a creator code for now). See [SPEC.md](SPEC.md) for what v0 does and doesn't do.
 
+## Building cuckulous inside cuckulous
+
+We build this app from a cuckulous room. Each of us runs Claude Code (or another harness) in our own clone with the room connected:
+
+```
+claude mcp add --transport http cuckulous <your private room link>
+```
+
+Then tell it: "Check the cuckulous room every few minutes (run sleep 120 between checks). Act on my typed messages. Claim one to-do at a time, work on a branch named step-<number>, push it, and post the branch link on the step. Never push to main." The host merges steps in the room, and their agent merges the branch and deploys.
+
 ## Run it yourself
 
 ```
