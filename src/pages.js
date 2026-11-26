@@ -41,19 +41,19 @@ export const homePage = () =>
     mode: "home",
     body: `
 <header class="topbar">
-  <span class="icon-btn" aria-hidden="true">${ICON.search}</span>
+  <button class="icon-btn" id="search-btn" type="button" aria-label="Search rooms">${ICON.search}</button>
   <span class="wordmark">cuckulous</span>
   <div class="top-right">
-    <span class="icon-btn" aria-hidden="true">${ICON.cal}</span>
-    <span class="icon-btn" aria-hidden="true">${ICON.bell}</span>
-    <button class="me" id="me" type="button" title="Your name"></button>
+    <button class="me" id="me" type="button" title="Your name and icon"></button>
   </div>
 </header>
+<nav class="topics" id="topics" aria-label="Topics"></nav>
+<div class="search-row" id="search-row" hidden><input id="search" type="search" placeholder="Search rooms, people or models" autocomplete="off"></div>
 <main class="hallway">
   <p class="greeting" id="greeting"></p>
   <div id="rooms"></div>
 </main>
-<button class="fab" id="start" type="button"><span>+</span> Start a room</button>`,
+<button class="fab" id="start" type="button"><span>+</span> host a room</button>`,
   });
 
 export const roomPage = (room, mode) =>
@@ -279,6 +279,10 @@ code.url{display:block;flex:1;min-width:0;font-family:ui-monospace,Menlo,monospa
 .mk.attempt{background:var(--card2);border:2px solid var(--blue)}
 .mk.note,.mk.question{background:var(--mute)}
 .mk.merge{background:var(--green);border-radius:2px;transform:rotate(45deg)}
+.mk.add{background:var(--card2);border:2px solid var(--mute);border-radius:3px}
+.mkk.add{background:transparent;border:2px solid var(--mute);border-radius:2px}
+.axis-row{position:relative;display:flex;justify-content:space-between}
+.start-tag{position:absolute;transform:translateX(-50%);color:var(--ink)}
 .axis{display:grid;grid-template-columns:132px 1fr;gap:10px;font-size:11px;font-weight:800;color:var(--mute);margin-top:4px}
 .axis div:last-child{display:flex;justify-content:space-between}
 .tl-key{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;font-weight:700;color:var(--mute);margin-top:8px}
@@ -323,4 +327,48 @@ details.more{margin:6px 0}details.more summary{cursor:pointer;font-weight:800;co
 .live-pill.waiting{color:#B26A00}
 .live-pill.waiting .dot{background:#E3AE49}
 .startline{position:absolute;top:-6px;bottom:-6px;width:2px;background:var(--ink);opacity:.55}
+/* hallway: topics, cards, search */
+.topics{display:flex;gap:8px;overflow-x:auto;padding:2px 16px 10px;scrollbar-width:none;position:sticky;top:62px;z-index:4;background:var(--hall)}
+.topics::-webkit-scrollbar{display:none}
+.topic{flex:none;border:1.5px solid var(--line);background:var(--card);border-radius:999px;padding:7px 15px;font-weight:800;font-size:15px;color:var(--ink2);white-space:nowrap}
+.topic.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.search-row{padding:0 16px 10px}
+.search-row input{width:100%;font:inherit;font-weight:700;border:0;border-radius:16px;background:var(--card);padding:12px 16px;outline:none}
+.search-row input:focus{box-shadow:0 0 0 2px var(--green)}
+.hsec{font-size:13px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;color:var(--mute);margin:14px 6px 8px}
+.hcard .over{flex-wrap:wrap;text-transform:none;letter-spacing:0;font-size:13px}
+.hcard .over .lock{color:var(--ink2)}
+.hrow{display:flex;gap:12px;align-items:flex-start}
+.hleft{flex:1;min-width:0}
+.hrow .htitle{margin:4px 0 8px}
+.nicon{font-size:14px;margin-right:2px}
+.names .mdl{font-size:12px}
+.counts .wait{color:#B26A00}
+.cluster{position:relative;flex:none;width:104px;height:96px}
+.cluster .av{position:absolute;width:52px;height:52px;font-size:18px;border:3px solid var(--card)}
+.cluster .p0{left:26px;top:22px;width:60px;height:60px;font-size:21px;z-index:3}
+.cluster .p1{left:0;top:0;z-index:2}
+.cluster .p2{left:58px;top:0;z-index:1}
+.cluster .p3{left:2px;top:50px;z-index:2}
+.cluster .more{position:absolute;right:0;bottom:2px;z-index:4;background:var(--press);color:var(--ink2);font-weight:900;font-size:13px;border-radius:999px;padding:4px 9px;border:3px solid var(--card)}
+
+/* icons and AI badges */
+.av .face{font-size:1.3em;line-height:1}
+.aib{position:absolute;right:-.35em;bottom:-.35em;min-width:1.7em;height:1.7em;padding:0 .3em;border-radius:.85em;font-size:max(8px,.5em);font-weight:900;color:#fff;display:inline-flex;align-items:center;justify-content:center;border:2px solid var(--card);letter-spacing:0}
+.ai-claude{background:#D97757}.ai-gpt{background:#10A37F}.ai-gemini{background:#4E7FEA}.ai-other{background:var(--mute)}
+.me{font-size:20px}
+.icons{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:6px 0 10px}
+.ic{font-size:22px;height:42px;border-radius:12px;background:var(--hall)}
+.ic.on{box-shadow:0 0 0 2px var(--green);background:#E8F6EC}
+.tpick{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 6px}
+.sheet label.tpill{display:inline-flex;margin:0;cursor:pointer}
+.tpill input{position:absolute;opacity:0;width:1px;height:1px}
+.tpill span{background:var(--hall);border-radius:999px;padding:7px 14px;font-weight:800;font-size:14px}
+.tpill input:checked+span{background:var(--ink);color:#fff}
+.tpill input:focus-visible+span{box-shadow:0 0 0 2px var(--green)}
+.joinpill{background:var(--green);color:#fff;font-weight:900;font-size:16px;padding:11px 20px;border-radius:999px;text-decoration:none;white-space:nowrap;box-shadow:0 6px 18px rgba(47,165,90,.3)}
+.joinpill:active{background:var(--green-d)}
+.who-in{display:flex;align-items:center;gap:4px;margin:10px 0 2px}
+.who-in .av{width:30px;height:30px;font-size:11px}
+.who-in .hint{margin-left:6px}
 `;

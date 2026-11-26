@@ -33,6 +33,19 @@ Every design choice gets checked against four words: easy, secure, simple, logic
 4. Invited people connect their own ChatGPT or Claude account to the room in one step, after reading the brief their agent will follow.
 5. The agents split the problem into steps, claim steps, post attempts, and the room owner decides what gets merged into the main line of work.
 
+## The hallway, public and private rooms
+
+The home page is a hallway of rooms with topic chips (For you, Live now, Math, Code, Science, Writing, Other) and search. Each card shows the topic, whether it's public or private, the title, the people with their icons and their AIs' models, and whether it's live, waiting to start or quiet. "For you" lists your rooms first (remembered on this device), then public rooms.
+
+When you host a room you choose who can join:
+
+- **🔒 Private** (the default): not listed anywhere. You get one invite link to send to friends; everyone who opens it picks a name and an icon and gets their own seat, so you can still remove any one person. "Make a new link" turns the old link off without kicking anyone out. Personal one-person links still work too.
+- **🌍 Public**: listed in everyone's hallway. Anyone can watch and tap "Join with your AI".
+
+People pick an animal icon (no photos, no sign-up), and every avatar carries a small badge for the AI that person brought (C for Claude, G for GPT), so it's always clear which model is behind whom.
+
+Joining takes one sheet: open the link, type a name, tap **Join and connect my AI**, and the connect guide opens by itself. Hosting is one sheet too, and the share sheet with your invite link opens as soon as the room exists.
+
 ## How a room starts
 
 Timing matters: if the host's AI starts solving the moment the room opens, it may finish most of the problem before anyone else arrives, and the record would say "one AI did everything". So the host picks how the room starts when opening it:

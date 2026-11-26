@@ -43,7 +43,19 @@
   const hash = (s) => [...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
   const initials = (name) =>
     String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
-  const avatar = (name, cls = "") => h("span", { class: `av g${hash(name) % 6} ${cls}`, title: name }, initials(name));
+  // People pick an icon from a fixed set (no photos, no sign-up). Each avatar also
+  // carries a small badge for the AI that person brought, so it's always clear
+  // which model is behind whom.
+  const ICONS = ["🦊", "🐸", "🐙", "🦉", "🐢", "🐝", "🦄", "🐳", "🦁", "🐼", "🐧", "🦖", "🐨", "🦋", "🐞", "🦩", "🐯", "🐰", "🦔", "🐌", "🐬", "🦜", "🐿️", "🦭"];
+  const iconFor = (name, icon) => (ICONS.includes(icon) ? icon : ICONS[hash(name || "?") % ICONS.length]);
+  const aiKind = (model) => (!model ? null : /claude/i.test(model) ? "claude" : /gpt|openai|chatgpt|\bo\d/i.test(model) ? "gpt" : /gemini/i.test(model) ? "gemini" : "other");
+  const AI_GLYPH = { claude: "C", gpt: "G", gemini: "Ge", other: "AI" };
+  const avatar = (name, cls = "", icon = null, model = null) => {
+    const kind = aiKind(model);
+    return h("span", { class: `av g${hash(name) % 6} ${cls}`, title: model ? `${name} · ${model}` : name },
+      h("span", { class: "face" }, iconFor(name, icon)),
+      kind && h("span", { class: `aib ai-${kind}`, title: model }, AI_GLYPH[kind]));
+  };
   const toast = (msg) => {
     const t = h("div", { class: "toast" }, msg);
     document.body.append(t);
@@ -99,14 +111,47 @@
     set name(v) { localStorage.setItem("cuck.name", v); },
     get code() { return localStorage.getItem("cuck.code") || ""; },
     set code(v) { localStorage.setItem("cuck.code", v); },
+    get icon() { return localStorage.getItem("cuck.icon") || ""; },
+    set icon(v) { localStorage.setItem("cuck.icon", v); },
     remember(entry) {
       const rank = { owner: 3, member: 2, watch: 1 };
       const prev = this.rooms.find((r) => r.id === entry.id);
-      const keep = prev && rank[prev.role] > rank[entry.role] ? prev : entry;
-      this.rooms = [{ ...keep, seen: Date.now() }, ...this.rooms.filter((r) => r.id !== entry.id)].slice(0, 50);
+      // Keep the strongest role, but don't lose details like the invite code.
+      const merged = prev && rank[prev.role] > rank[entry.role] ? { ...entry, ...prev } : { ...prev, ...entry };
+      this.rooms = [{ ...merged, seen: Date.now() }, ...this.rooms.filter((r) => r.id !== entry.id)].slice(0, 50);
     },
     forget(id) { this.rooms = this.rooms.filter((r) => r.id !== id); },
   };
+
+  // ---------- shared bits for every page ----------
+  const TOPICS = [["math", "∑", "Math"], ["code", "💻", "Code"], ["science", "🔬", "Science"], ["writing", "✍️", "Writing"], ["other", "🎲", "Other"]];
+  const topicLabel = (t) => {
+    const x = TOPICS.find(([k]) => k === t) || TOPICS[TOPICS.length - 1];
+    return `${x[1]} ${x[2]}`;
+  };
+  function iconPicker(current, onPick) {
+    const grid = h("div", { class: "icons" });
+    let sel = current;
+    const draw = () => {
+      grid.textContent = "";
+      for (const ic of ICONS)
+        grid.append(h("button", { type: "button", class: `ic ${ic === sel ? "on" : ""}`, "aria-label": `Icon ${ic}`, onclick: () => { sel = ic; onPick(ic); draw(); } }, ic));
+    };
+    draw();
+    return grid;
+  }
+  function profileSheet(after) {
+    let icon = iconFor(store.name, store.icon);
+    const input = h("input", { value: store.name, maxlength: "40", placeholder: "Your name" });
+    const close = openSheet(
+      h("h3", {}, "Who are you?"),
+      h("p", { class: "hint" }, "No sign-up. Your name, icon and rooms are remembered on this device only."),
+      input,
+      h("p", { class: "hint" }, "Pick your icon"),
+      iconPicker(icon, (ic) => (icon = ic)),
+      h("button", { class: "go", type: "button", onclick: () => { store.name = input.value.trim(); store.icon = icon; close(); if (after) after(); } }, "Save"));
+    input.focus();
+  }
 
   const mode = document.body.dataset.mode;
   const roomId = document.body.dataset.room;
@@ -118,95 +163,130 @@
   // HALLWAY
   // =====================================================================
   if (mode === "home") {
+    const view = { chip: "for-you", q: "" };
+    const isLive = (s) => s.started && Date.now() - s.last_ts < 10 * 60 * 1000;
+
     const greet = () => {
       const hr = new Date().getHours();
       const part = hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
       $("#greeting").textContent = store.name ? `${part}, ${store.name}` : "Welcome to the hallway";
       const me = $("#me");
       me.className = `me g${hash(store.name || "?") % 6}`;
-      me.textContent = initials(store.name || "?");
+      me.textContent = iconFor(store.name, store.icon);
     };
     greet();
+    $("#me").addEventListener("click", () => profileSheet(() => { greet(); renderHall(); }));
 
-    $("#me").addEventListener("click", () => {
-      const input = h("input", { value: store.name, maxlength: "40", placeholder: "Your name" });
-      const close = openSheet(
-        h("h3", {}, "What should we call you?"),
-        h("p", { class: "hint" }, "No sign-up. Your name and your rooms are remembered on this device only."),
-        input,
-        h("button", { class: "go", type: "button", onclick: () => { store.name = input.value.trim(); greet(); close(); } }, "Save"));
-      input.focus();
+    // Topic chips, like the app's "for you · business · music" row.
+    const chips = $("#topics");
+    const CHIPS = [["for-you", "✨ For you"], ["live", "🟢 Live now"], ...TOPICS.map(([k, e, l]) => [k, `${e} ${l}`])];
+    const drawChips = () => {
+      chips.textContent = "";
+      for (const [k, label] of CHIPS)
+        chips.append(h("button", { type: "button", class: `topic ${view.chip === k ? "on" : ""}`, onclick: () => { view.chip = k; drawChips(); renderHall(); } }, label));
+    };
+    drawChips();
+
+    $("#search-btn").addEventListener("click", () => {
+      const row = $("#search-row");
+      row.hidden = !row.hidden;
+      if (!row.hidden) $("#search").focus();
+      else { view.q = ""; $("#search").value = ""; renderHall(); }
     });
+    $("#search").addEventListener("input", (e) => { view.q = e.target.value.trim().toLowerCase(); renderHall(); });
 
     const linkFor = (r) =>
       r.role === "owner" ? `/r/${r.id}/admin#${r.key}` : r.role === "member" ? `/r/${r.id}/join#${r.key}` : `/r/${r.id}`;
 
+    // One room card: topic and title on the left, the people (and their AIs) on the right.
+    function card(s) {
+      const r = s.mine;
+      const people = [...s.members].sort((a, b) => b.posted - a.posted || (a.role === "owner" ? -1 : 1));
+      const roleWord = r ? (r.role === "owner" ? "you host" : r.role === "member" ? "you're in" : "watching") : null;
+      const title = h("div", { class: "htitle" });
+      title.textContent = s.title;
+      const el = h("a", { class: "hcard", href: r ? linkFor(r) : `/r/${s.id}` },
+        h("p", { class: "over" }, h("span", {}, topicLabel(s.topic)),
+          s.visibility === "private" ? h("span", { class: "lock" }, "· 🔒 private") : h("span", {}, "· 🌍 public"),
+          roleWord && h("span", {}, `· ${roleWord}`)),
+        h("div", { class: "hrow" },
+          h("div", { class: "hleft" }, title,
+            h("ul", { class: "names" }, ...people.slice(0, 3).map((m) =>
+              h("li", {}, h("span", { class: "nicon" }, iconFor(m.name, m.icon)), m.name, m.model && h("span", { class: "mdl" }, m.model), m.posted && h("span", { class: "bub" }, "💬")))),
+            h("div", { class: "counts" },
+              h("span", {}, `${s.members.length} 👤`), h("span", {}, `${s.post_count} 💬`), h("span", {}, `${s.done_count}/${s.step_count} ✅`),
+              !s.started ? h("span", { class: "wait" }, "⏳ waiting to start") : isLive(s) ? h("span", { class: "live" }, "● live") : h("span", {}, `${ago(s.last_ts)} ago`))),
+          h("div", { class: "cluster" }, ...people.slice(0, 4).map((m, i) => avatar(m.name, `p${i}`, m.icon, m.model)),
+            people.length > 4 && h("span", { class: "more" }, `+${people.length - 4}`))));
+      math(title);
+      return el;
+    }
+
     async function renderHall() {
-      const rooms = store.rooms;
       const box = $("#rooms");
-      if (!rooms.length) {
-        box.textContent = "";
-        box.append(h("div", { class: "empty-hall" },
-          h("div", { class: "big" }, "🏠"),
-          h("div", {}, "Your hallway is empty."),
-          h("div", {}, "Start a room, or open a link someone sent you and it shows up here.")));
-        return;
-      }
-      const sums = await Promise.all(rooms.map((r) => api(`/api/r/${r.id}/summary`).then((s) => ({ r, s })).catch((x) => ({ r, s: null, gone: /does not exist/.test(x.message) }))));
+      const topic = TOPICS.some(([k]) => k === view.chip) ? view.chip : "";
+      const [mineSums, pub] = await Promise.all([
+        Promise.all(store.rooms.map((r) => api(`/api/r/${r.id}/summary`).then((s) => ({ r, s })).catch((x) => ({ r, s: null, gone: /does not exist/.test(x.message) })))),
+        api(`/api/rooms${topic ? `?topic=${topic}` : ""}`).then((d) => d.rooms).catch(() => []),
+      ]);
+      for (const { r } of mineSums.filter((x) => x.gone)) store.forget(r.id);
+      const mine = mineSums.filter((x) => x.s).map((x) => ({ ...x.s, id: x.r.id, mine: x.r }));
+      const mineIds = new Set(mine.map((x) => x.id));
+      const others = pub.filter((p) => !mineIds.has(p.id));
+      const match = (s) =>
+        (view.chip === "for-you" || (view.chip === "live" ? isLive(s) : s.topic === view.chip)) &&
+        (!view.q || `${s.title} ${s.members.map((m) => `${m.name} ${m.model || ""}`).join(" ")}`.toLowerCase().includes(view.q));
       box.textContent = "";
-      const live = sums.filter((x) => x.s).sort((a, b) => b.s.last_ts - a.s.last_ts);
-      for (const { r, s } of live) {
-        const shown = [...s.members].sort((a, b) => b.posted - a.posted).slice(0, 4);
-        const isLive = Date.now() - s.last_ts < 10 * 60 * 1000;
-        const roleWord = r.role === "owner" ? "you host" : r.role === "member" ? "you're in" : "watching";
-        const title = h("div", { class: "htitle" });
-        title.textContent = s.title;
-        box.append(h("a", { class: "hcard", href: linkFor(r) },
-          h("p", { class: "over" }, h("span", { class: "house" }), `cuckulous · ${roleWord}`),
-          title,
-          h("div", { class: "hbody" },
-            h("div", { class: "stack" }, ...shown.slice(0, 2).map((m) => avatar(m.name))),
-            h("div", {},
-              h("ul", { class: "names" }, ...shown.map((m) => h("li", {}, m.name, m.model && h("span", { class: "mdl" }, m.model), m.posted && h("span", { class: "bub" }, "💬")))),
-              h("div", { class: "counts" },
-                h("span", {}, `${s.members.length} 👤`),
-                h("span", {}, `${s.post_count} 💬`),
-                h("span", {}, `${s.done_count}/${s.step_count} ✅`),
-                !s.started ? h("span", {}, "⏳ waiting to start") : isLive ? h("span", { class: "live" }, "● live") : h("span", {}, ago(s.last_ts) + " ago"))))));
-        math(title);
+      const section = (label, list) => {
+        if (!list.length) return;
+        box.append(h("p", { class: "hsec" }, label));
+        list.sort((a, b) => b.last_ts - a.last_ts).forEach((x) => box.append(card(x)));
+      };
+      section("Your rooms", mine.filter(match));
+      section("Public rooms", others.filter(match));
+      if (!box.children.length) {
+        const nothingAtAll = !mine.length && !others.length;
+        box.append(h("div", { class: "empty-hall" },
+          h("div", { class: "big" }, nothingAtAll ? "🏠" : "🌾"),
+          h("div", {}, nothingAtAll ? "The hallway is quiet." : "Nothing here yet."),
+          h("div", {}, nothingAtAll ? "Host a room, or open a link someone sent you." : "Try another topic, or host the first room.")));
       }
-      for (const { r } of sums.filter((x) => x.gone)) store.forget(r.id);
-      if (!live.length) box.append(h("p", { class: "empty-hall" }, "Couldn't load your rooms. Check your connection."));
     }
     renderHall();
     setInterval(renderHall, 15000);
 
+    // Hosting: one sheet, then the share sheet opens by itself in the room.
     $("#start").addEventListener("click", () => {
       const f = h("form", {});
       const err = h("p", { class: "error" });
+      let icon = iconFor(store.name, store.icon);
+      const opt = (name, value, title, desc, checked) =>
+        h("label", { class: "mode" }, h("input", { type: "radio", name, value, checked: checked ? "" : null }),
+          h("span", {}, h("b", {}, title), h("span", { class: "hint" }, desc)));
       f.append(
-        h("h3", {}, "Start a room"),
-        h("p", { class: "hint" }, "Everyone who joins reads the brief before connecting their AI, and it can't be changed later."),
+        h("h3", {}, "Host a room"),
         h("label", {}, "What's the problem?", h("input", { name: "title", required: true, maxlength: "200", placeholder: "Is 2^n + 1 ever a perfect cube?" })),
-        h("label", {}, "Brief", h("span", { class: "hint" }, "What the agents should do and how. LaTeX works: $x^2$."),
-          h("textarea", { name: "brief", required: true, maxlength: "8000", rows: "6", placeholder: "Problem: ...\n\nRules: break it into steps, claim before working, show every calculation, post results with a check." })),
-        h("div", { class: "modes" },
-          h("div", { class: "mlabel" }, "How should it start?"),
-          ...[
-            ["on_join", "Wait for another AI (recommended)", "Your AI can lay out the steps, but nobody solves anything until a friend's AI joins. Then the room starts by itself, so the record shows who really did what."],
-            ["open", "Start right away", "Your AI can work on the problem immediately, even if nobody else joins. The first AI in may end up doing most of it."],
-            ["manual", "I'll press Start", "Nobody's AI works, not even yours, until you press Start. Fairest when you're timing the room."],
-          ].map(([value, title, desc], i) =>
-            h("label", { class: "mode" }, h("input", { type: "radio", name: "start_mode", value, checked: i === 0 ? "" : null }),
-              h("span", {}, h("b", {}, title), h("span", { class: "hint" }, desc))))),
+        h("div", { class: "tpick" }, ...TOPICS.map(([k, e, l], i) =>
+          h("label", { class: "tpill" }, h("input", { type: "radio", name: "topic", value: k, checked: i === 0 ? "" : null }), h("span", {}, `${e} ${l}`)))),
+        h("label", {}, "Brief", h("span", { class: "hint" }, "Everyone reads this before connecting their AI, and it can't be changed later. LaTeX works: $x^2$."),
+          h("textarea", { name: "brief", required: true, maxlength: "8000", rows: "5", placeholder: "Problem: ...\n\nRules: break it into steps, claim before working, show every calculation, post results with a check." })),
+        h("div", { class: "modes" }, h("div", { class: "mlabel" }, "Who can join?"),
+          opt("visibility", "private", "🔒 Private", "Only people you send the invite link to. Not listed in the hallway.", true),
+          opt("visibility", "public", "🌍 Public", "Listed in the hallway. Anyone can watch and bring their AI.", false)),
+        h("div", { class: "modes" }, h("div", { class: "mlabel" }, "How should it start?"),
+          opt("start_mode", "on_join", "Wait for another AI (recommended)", "Your AI can lay out the steps, but nobody solves anything until a friend's AI joins. Then the room starts by itself.", true),
+          opt("start_mode", "open", "Start right away", "Your AI can work on the problem immediately, even if nobody else joins.", false),
+          opt("start_mode", "manual", "I'll press Start", "Nobody's AI works, not even yours, until you press Start. Fairest when you're timing the room.", false)),
         h("label", {}, "Your name", h("input", { name: "name", required: true, maxlength: "40", value: store.name, placeholder: "Noah" })),
+        h("div", { class: "mlabel" }, "Your icon"),
+        iconPicker(icon, (ic) => (icon = ic)),
         h("label", {}, "Host code", h("span", { class: "hint" }, "Keeps strangers from opening rooms. Ask Noah for it."),
           h("input", { name: "code", required: true, autocomplete: "off", value: store.code })),
-        h("button", { class: "go", type: "submit" }, "Let's go"),
+        h("button", { class: "go", type: "submit" }, "Open the room"),
         err);
       f.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const data = Object.fromEntries(new FormData(f));
+        const data = { ...Object.fromEntries(new FormData(f)), icon };
         const btn = f.querySelector(".go");
         btn.disabled = true;
         err.textContent = "";
@@ -214,7 +294,9 @@
           const r = await api("/api/rooms", { method: "POST", body: JSON.stringify(data) });
           store.name = data.name.trim();
           store.code = data.code.trim();
-          store.remember({ id: r.room_id, role: "owner", key: r.owner_key });
+          store.icon = icon;
+          store.remember({ id: r.room_id, role: "owner", key: r.owner_key, invite: r.invite_code, visibility: r.visibility });
+          sessionStorage.setItem("cuck.justCreated", r.room_id);
           location.href = `/r/${r.room_id}/admin#${r.owner_key}`;
         } catch (x) {
           err.textContent = x.message;
@@ -230,9 +312,14 @@
   // =====================================================================
   // ROOM (watch / join / admin)
   // =====================================================================
-  const state = { members: [], steps: [], events: [], last: 0, loaded: false, me: null, brief: "", started: true, startMode: "open", startedAt: null };
+  const state = { members: [], steps: [], events: [], last: 0, loaded: false, me: null, brief: "", title: "", started: true, startMode: "open", startedAt: null, visibility: "private", topic: "other" };
   const byId = () => Object.fromEntries(state.members.map((m) => [m.id, m]));
   const nameOf = (id) => byId()[id]?.name || "?";
+  // A member's avatar: their icon plus the badge of the AI they brought.
+  const avatarOf = (id, cls = "") => {
+    const m = byId()[id];
+    return avatar(m?.name || "?", cls, m?.icon, m?.model);
+  };
   // Each member is a person plus their AI. The model is what the AI reports about
   // itself on each action; the app is what the connector reports when it joins.
   const modelOf = (id) => byId()[id]?.model || null;
@@ -311,14 +398,47 @@
     pick("Claude");
   }
 
-  function inviteSheet() {
+  // Owner: share the room. Private rooms have one invite link for everyone; each
+  // person still gets their own seat, and the owner can remove anyone.
+  function shareSheet() {
+    const entry = store.rooms.find((r) => r.id === roomId) || {};
+    const pub = state.visibility === "public";
+    const linkBox = h("div", {});
+    const shareBtn = (link) =>
+      navigator.share && h("button", { class: "ghost", type: "button", onclick: () => navigator.share({ title: state.title, text: "Bring your AI to my cuckulous room", url: link }).catch(() => {}) }, "Share…");
+    const newLink = h("button", {
+      class: "ghost", type: "button",
+      onclick: async () => {
+        if (entry.invite && !confirm("Make a new invite link? The old one stops working. People already in keep their seats.")) return;
+        try {
+          const r = await api(`/api/r/${roomId}/invite-link`, { method: "POST", ...withKey, body: "{}" });
+          entry.invite = r.invite_code;
+          store.remember({ id: roomId, role: "owner", key, invite: r.invite_code });
+          drawLink();
+          toast("New invite link ready");
+        } catch (x) { alert(x.message); }
+      },
+    }, "Make a new link");
+    const drawLink = () => {
+      linkBox.textContent = "";
+      const link = pub ? `${origin}/r/${roomId}` : entry.invite ? `${origin}/r/${roomId}/invite#${entry.invite}` : null;
+      if (!link) {
+        newLink.textContent = "Make an invite link";
+        linkBox.append(h("p", { class: "hint" }, "This device doesn't have the invite link (it's only kept where the room was opened)."), newLink);
+        return;
+      }
+      newLink.textContent = "Make a new link";
+      linkBox.append(copyRow(link), h("div", { class: "row" }, shareBtn(link), !pub && newLink));
+    };
+    drawLink();
+
     const nameInput = h("input", { placeholder: "Friend's name", maxlength: "40" });
     const result = h("div", {});
     const list = h("div", {});
     const fill = () => {
       list.textContent = "";
       for (const m of state.members.filter((x) => !x.removed)) {
-        list.append(h("div", { class: "mrow" }, avatar(m.name),
+        list.append(h("div", { class: "mrow" }, avatarOf(m.id),
           h("span", { class: "nm" }, m.name, m.role === "owner" ? " (host)" : "", mdl(m.model)),
           m.role !== "owner" && h("button", {
             class: "ghost", type: "button",
@@ -335,31 +455,78 @@
     };
     fill();
     openSheet(
-      h("h3", {}, "Invite someone"),
-      h("p", { class: "hint" }, "Each person gets their own private link. Their AI posts under their name."),
-      h("div", { class: "row" }, nameInput,
-        h("button", {
-          class: "copy", type: "button",
-          onclick: async () => {
-            result.textContent = "";
-            try {
-              const r = await api(`/api/r/${roomId}/invite`, { method: "POST", ...withKey, body: JSON.stringify({ name: nameInput.value }) });
-              const link = `${origin}/r/${roomId}/join#${r.member_key}`;
-              result.append(h("p", {}, `Send this to ${nameInput.value} privately:`), copyRow(link));
-              nameInput.value = "";
-              await poll();
-              fill();
-            } catch (x) {
-              result.append(h("p", { class: "error" }, x.message));
-            }
-          },
-        }, "Create link")),
-      result,
-      h("p", {}, h("strong", {}, "Watch link"), " (anyone can watch, nobody can post):"),
-      copyRow(`${origin}/r/${roomId}`),
+      h("h3", {}, pub ? "Share your public room" : "Invite friends"),
+      h("p", { class: "hint" }, pub
+        ? "It's listed in the hallway. Anyone with the link can watch and bring their AI. You can remove anyone."
+        : "One link for everyone you invite. Each person picks a name and gets their own seat, and you can remove anyone."),
+      linkBox,
+      h("details", { class: "more" }, h("summary", {}, "Or make a personal link for one person"),
+        h("div", { class: "row" }, nameInput,
+          h("button", {
+            class: "copy", type: "button",
+            onclick: async () => {
+              result.textContent = "";
+              try {
+                const r = await api(`/api/r/${roomId}/invite`, { method: "POST", ...withKey, body: JSON.stringify({ name: nameInput.value }) });
+                result.append(h("p", {}, `Send this to ${nameInput.value} privately:`), copyRow(`${origin}/r/${roomId}/join#${r.member_key}`));
+                nameInput.value = "";
+                await poll();
+                fill();
+              } catch (x) {
+                result.append(h("p", { class: "error" }, x.message));
+              }
+            },
+          }, "Create link")),
+        result),
+      !pub && h("p", {}, h("strong", {}, "Watch-only link"), " (can watch, can't post):"),
+      !pub && copyRow(`${origin}/r/${roomId}`),
       h("p", {}, h("strong", {}, "In the room")),
       list);
-    nameInput.focus();
+  }
+
+  // Guest: take a seat in one step, then the connect guide opens by itself.
+  function joinSheet() {
+    let icon = iconFor(store.name, store.icon);
+    const input = h("input", { value: store.name, maxlength: "40", placeholder: "Your name" });
+    const err = h("p", { class: "error" });
+    const briefBox = text(state.brief, "text warn");
+    briefBox.style.background = "var(--hall)";
+    const inRoom = state.members.filter((m) => !m.removed);
+    const go = h("button", {
+      class: "go", type: "button",
+      onclick: async () => {
+        const name = input.value.trim();
+        if (!name) {
+          err.textContent = "Add your name so people know whose AI this is.";
+          return;
+        }
+        go.disabled = true;
+        err.textContent = "";
+        try {
+          const r = await api(`/api/r/${roomId}/join`, { method: "POST", body: JSON.stringify({ name, icon, invite: mode === "invite" ? key : undefined }) });
+          store.name = name;
+          store.icon = icon;
+          store.remember({ id: roomId, role: "member", key: r.member_key });
+          location.href = `/r/${roomId}/join#${r.member_key}`;
+        } catch (x) {
+          err.textContent = x.message;
+          go.disabled = false;
+        }
+      },
+    }, "Join and connect my AI");
+    openSheet(
+      h("h3", {}, "Bring your AI to this room"),
+      h("p", {}, "Your AI will work on this brief, together with everyone else's:"),
+      briefBox,
+      inRoom.length && h("div", { class: "who-in" }, ...inRoom.slice(0, 6).map((m) => avatarOf(m.id)),
+        h("span", { class: "hint" }, `${inRoom.length} ${inRoom.length === 1 ? "person is" : "people are"} in`)),
+      h("label", {}, "Your name", input),
+      h("div", { class: "mlabel" }, "Your icon"),
+      iconPicker(icon, (ic) => (icon = ic)),
+      go,
+      err,
+      h("p", { class: "hint" }, "No sign-up and no API key. Next you add the room to your own ChatGPT or Claude, and you'll see exactly what your AI is told before it does anything."));
+    input.focus();
   }
 
   function historySheet() {
@@ -375,7 +542,7 @@
     })[e.type] || e.type;
     const feed = h("ol", { class: "feed" });
     for (const e of [...state.events].reverse().slice(0, 300)) {
-      feed.append(h("li", {}, avatar(nameOf(e.member_id)),
+      feed.append(h("li", {}, avatarOf(e.member_id),
         h("div", { style: "flex:1;min-width:0" },
           h("div", {}, h("strong", {}, nameOf(e.member_id)), mdl(aiFor(e)), " ", verb(e), " ", h("span", { class: "when" }, ago(e.ts))),
           e.type === "post" || e.type === "step_added" ? text(e.body, "text ftext") : null)));
@@ -438,7 +605,7 @@
     card.textContent = "";
     const [modeName, modeText] = MODE_TEXT[state.startMode] || MODE_TEXT.open;
     const ready = state.members.filter((m) => !m.removed).map((m) =>
-      h("div", { class: "ready" }, avatar(m.name), h("span", {}, m.name, m.role === "owner" ? " (host)" : ""),
+      h("div", { class: "ready" }, avatarOf(m.id), h("span", {}, m.name, m.role === "owner" ? " (host)" : ""),
         m.app || m.model
           ? h("span", { class: "st-ok" }, `✓ AI connected${m.model ? ` · ${m.model}` : appName(m.app) ? ` · ${appName(m.app)}` : ""}`)
           : h("span", { class: "st-no" }, "not connected yet")));
@@ -496,7 +663,10 @@
     for (const e of state.events) {
       if (!AI_WORK.includes(e.type)) continue;
       const model = aiFor(e);
-      if (e.type === "step_added") proposer[e.step_id] = { id: e.member_id, model };
+      if (e.type === "step_added") {
+        proposer[e.step_id] = { id: e.member_id, model };
+        marks.push({ m: e.member_id, ts: e.ts, kind: "add" });
+      }
       if (e.type === "claimed") {
         holder[e.step_id] = e.member_id;
         if (!firstTaker[e.step_id]) firstTaker[e.step_id] = { id: e.member_id, model };
@@ -611,18 +781,31 @@
         track.append(bar);
       }
       for (const mk of tw.marks.filter((x) => x.m === id)) {
-        const dot = h("div", { class: `mk ${mk.kind}`, title: `${mk.kind === "merge" ? "merged a step" : mk.kind} at +${dur(mk.ts - tw.t0)}` });
+        const what = { merge: "merged a step", add: "added a step" }[mk.kind] || mk.kind;
+        const at = tw.startAt ? (mk.ts < tw.startAt ? `${dur(tw.startAt - mk.ts)} before the start` : `+${dur(mk.ts - tw.startAt)}`) : `+${dur(mk.ts - tw.t0)}`;
+        const dot = h("div", { class: `mk ${mk.kind}`, title: `${what}, ${at}` });
         dot.style.left = pct(mk.ts);
         track.append(dot);
       }
       tl.append(h("div", { class: "lane" },
-        h("div", { class: "lane-who" }, avatar(m?.name || "?"), h("div", { class: "ln" }, h("b", {}, m?.name || "?"), h("i", {}, m?.model || (appName(m?.app) ? `via ${appName(m.app)}` : "AI not reported")))),
+        h("div", { class: "lane-who" }, avatarOf(id), h("div", { class: "ln" }, h("b", {}, m?.name || "?"), h("i", {}, m?.model || (appName(m?.app) ? `via ${appName(m.app)}` : "AI not reported")))),
         track));
     }
     tl.append(
-      h("div", { class: "axis" }, h("div", {}), tw.startAt
-        ? h("div", {}, h("span", {}, tw.startAt > tw.t0 ? `−${dur(tw.startAt - tw.t0)} (planning)` : "start"), h("span", {}, "▏start"), h("span", {}, `+${dur(clock)}`))
-        : h("div", {}, h("span", {}, "0:00"), h("span", {}, `+${dur(span / 2)}`), h("span", {}, `+${dur(span)}`))),
+      h("div", { class: "axis" }, h("div", {}), (() => {
+        if (!tw.startAt) return h("div", {}, h("span", {}, "0:00"), h("span", {}, `+${dur(span / 2)}`), h("span", {}, `+${dur(span)}`));
+        // Planning before the start gets its own label only when there's room to read it.
+        const showPre = tw.startAt - tw.t0 > span * 0.12;
+        const row = h("div", { class: "axis-row" },
+          h("span", {}, showPre ? `−${dur(tw.startAt - tw.t0)}` : "start"),
+          h("span", {}, `+${dur(clock)}`));
+        if (showPre) {
+          const tag = h("span", { class: "start-tag" }, "start");
+          tag.style.left = pct(tw.startAt);
+          row.append(tag);
+        }
+        return row;
+      })()),
       h("div", { class: "tl-key" },
         h("span", {}, h("i", { class: "sw", style: "background:#F5D38B" }), "holding a step (claim → latest post)"),
         h("span", {}, h("i", { class: "sw", style: "background:#9ED7B0" }), "its post was merged"),
@@ -630,11 +813,12 @@
         h("span", {}, h("i", { class: "mkk result" }), "result"),
         h("span", {}, h("i", { class: "mkk attempt" }), "attempt"),
         h("span", {}, h("i", { class: "mkk note" }), "note or question"),
+        h("span", {}, h("i", { class: "mkk add" }), "step added"),
         h("span", {}, h("i", { class: "mkk merge" }), "merge")));
     box.append(tl);
 
     // Relay: how each step moved between people and their AIs.
-    const hop = (id, model, verb) => h("span", { class: "hop" }, avatar(nameOf(id)), h("em", {}, verb), nameOf(id), mdl(model || null));
+    const hop = (id, model, verb) => h("span", { class: "hop" }, avatarOf(id), h("em", {}, verb), nameOf(id), mdl(model || null));
     const arrow = () => h("span", { class: "arrow" }, "→");
     const relay = h("div", { class: "relay" });
     for (const st of [...state.steps].sort((a, b) => a.id - b.id)) {
@@ -723,12 +907,17 @@
     right.append(round("📜", "History", historySheet));
     if (isOwner()) {
       right.append(round("🔌", "Connect my AI", () => connectSheet(`${origin}/mcp/${roomId}/${key}`)));
-      right.append(round("+", "Invite people", inviteSheet, "round plus"));
+      right.append(round("+", "Invite people", shareSheet, "round plus"));
     } else if (mode === "join" && state.me) {
       right.append(round("🔗", "Copy watch link", () => copy(`${origin}/r/${roomId}`, "Watch link copied")));
       right.append(round("🔌", "Connect my AI", () => connectSheet(`${origin}/mcp/${roomId}/${key}`), "round plus"));
     } else {
-      right.append(round("🔗", "Copy watch link", () => copy(`${origin}/r/${roomId}`, "Watch link copied")));
+      // Watching. If this device already has a seat, go there; otherwise offer to join.
+      const seat = store.rooms.find((r) => r.id === roomId && r.key && (r.role === "member" || r.role === "owner"));
+      const canJoin = state.loaded && (state.visibility === "public" || (mode === "invite" && key));
+      if (seat) right.append(h("a", { class: "joinpill", href: seat.role === "owner" ? `/r/${roomId}/admin#${seat.key}` : `/r/${roomId}/join#${seat.key}` }, "Go to my seat"));
+      else if (canJoin) right.append(h("button", { class: "joinpill", type: "button", onclick: joinSheet }, "✋ Join with your AI"));
+      else right.append(round("🔗", "Copy watch link", () => copy(`${origin}/r/${roomId}`, "Watch link copied")));
     }
   }
 
@@ -747,7 +936,7 @@
     const person = (m, big) => {
       const speaking = Date.now() - (lastBy[m.id] || 0) < 90_000 && did.has(m.id);
       return h("div", { class: `person ${speaking ? "speaking" : ""}` },
-        avatar(m.name),
+        avatarOf(m.id),
         h("div", { class: "pname" }, m.role === "owner" && h("span", { class: "star", title: "host" }, "✳"), h("span", { class: "nm" }, m.name)),
         m.model && h("div", { class: "pmodel", title: appName(m.app) ? `${m.model} via ${appName(m.app)}` : m.model }, m.model),
         big && h("div", { class: "pstatus" }, claimedBy[m.id] ? `on step #${claimedBy[m.id]}` : speaking ? "speaking" : "listening"));
@@ -769,7 +958,7 @@
     const postEl = (p, step) => {
       const merged = step && step.merged_event === p.id;
       return h("div", { class: `post ${merged ? "merged" : ""}` },
-        avatar(nameOf(p.member_id)),
+        avatarOf(p.member_id),
         h("div", { class: "bubble" },
           h("div", { class: "by" }, nameOf(p.member_id), mdl(aiFor(p)), h("span", { class: `kind ${p.kind}` }, p.kind), merged && h("span", {}, "✅ merged"), h("span", {}, ago(p.ts)),
             isOwner() && step && step.status !== "done" && h("button", {
@@ -829,6 +1018,9 @@
         state.started = d.started;
         state.startMode = d.start_mode;
         state.startedAt = d.started_at;
+        state.visibility = d.visibility || "private";
+        state.topic = d.topic || "other";
+        state.title = d.title;
         const membersChanged = startChanged || JSON.stringify(d.members) !== JSON.stringify(state.members);
         const stepsChanged = JSON.stringify(d.steps) !== JSON.stringify(state.steps);
         state.members = d.members;
@@ -865,12 +1057,20 @@
     } else {
       store.remember({ id: roomId, role: "watch" });
     }
-    $("#over-text").textContent = state.me
-      ? `cuckulous · ${state.me.role === "owner" ? "you host" : `you're in as ${state.me.name}`}`
-      : $("#over-text").textContent === "room" ? "cuckulous · watching" : $("#over-text").textContent;
+    const problem = $("#over-text").textContent !== "room" ? $("#over-text").textContent : null;
     if (!window.renderMathInElement) await new Promise((r) => window.addEventListener("load", r, { once: true }));
     await poll();
+    $("#over-text").textContent = problem || [
+      topicLabel(state.topic),
+      state.visibility === "public" ? "🌍 public" : "🔒 private",
+      state.me ? (state.me.role === "owner" ? "you host" : `you're in as ${state.me.name}`) : mode === "invite" ? "you're invited" : "watching",
+    ].join(" · ");
     bottomBar();
+    if (mode === "invite" && key && !store.rooms.some((r) => r.id === roomId && r.key)) joinSheet();
+    if (isOwner() && sessionStorage.getItem("cuck.justCreated") === roomId) {
+      sessionStorage.removeItem("cuck.justCreated");
+      shareSheet();
+    }
     // First visit to a join link: show how to connect right away.
     const seenKey = `cuck.seen.${roomId}`;
     if (mode === "join" && state.me && !localStorage.getItem(seenKey)) {

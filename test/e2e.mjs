@@ -137,6 +137,33 @@ const relabeled = { ...logEvents.find((e) => e.id === postId), model: "Some othe
 ok(sha(JSON.stringify([relabeled.id, relabeled.ts, relabeled.member_id, relabeled.type, relabeled.step_id ?? null, relabeled.kind ?? null, relabeled.body ?? null, relabeled.model, relabeled.prev_hash])) !== relabeled.hash, "changing which model wrote a post breaks its hash too");
 ok(sha(tamperedInput) !== logEvents[1].hash, "an edited event no longer matches its hash");
 
+// Public and private rooms.
+const pubRoom = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: "Public e2e room", brief: "Find $y$.", name: "Pat", icon: "🦉", visibility: "public", topic: "science" }) });
+ok(pubRoom.status === 200 && pubRoom.data.visibility === "public" && !pubRoom.data.invite_code, "public room opens without an invite code");
+const listed = await j("/api/rooms?topic=science");
+ok(listed.data.rooms.some((x) => x.id === pubRoom.data.room_id && x.members[0].icon === "🦉"), "public room shows in the hallway with its people's icons");
+ok(!(await j("/api/rooms")).data.rooms.some((x) => x.id === room), "private rooms never show in the hallway");
+const pj = await j(`/api/r/${pubRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Quinn", icon: "<b>x</b>" }) });
+ok(pj.status === 200 && pj.data.member_key?.length === 32, "anyone can take a seat in a public room");
+const quinn = await connect(`${BASE}/mcp/${pubRoom.data.room_id}/${pj.data.member_key}`);
+r = await call(quinn, "read_room", {});
+ok(!r.isError && r.data.you.name === "Quinn", "a self-serve seat works as a connector right away");
+ok((await j(`/api/r/${pubRoom.data.room_id}/state`)).data.members.find((m) => m.name === "Quinn").icon === null, "icons outside the fixed set are dropped");
+ok((await j("/api/rooms?topic=science")).data.rooms.find((x) => x.id === pubRoom.data.room_id).members.length === 2, "the hallway card updates when someone joins");
+const privRoom = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: "Private e2e room", brief: "Find $z$.", name: "Pat", visibility: "private" }) });
+ok(privRoom.data.invite_code?.length === 32, "private room comes with one invite link");
+const noCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Eve" }) });
+ok(noCode.status === 403 && /private/.test(noCode.data.error), "private room refuses seats without the invite link");
+const withCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Ria", invite: privRoom.data.invite_code }) });
+ok(withCode.status === 200, "the invite link gives anyone their own seat");
+const notHostRotate = await j(`/api/r/${privRoom.data.room_id}/invite-link`, { method: "POST", headers: { "x-key": withCode.data.member_key }, body: "{}" });
+ok(notHostRotate.status === 400, "only the host can change the invite link");
+const rotated = await j(`/api/r/${privRoom.data.room_id}/invite-link`, { method: "POST", headers: { "x-key": privRoom.data.owner_key }, body: "{}" });
+const oldCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Bo", invite: privRoom.data.invite_code }) });
+const newCode = await j(`/api/r/${privRoom.data.room_id}/join`, { method: "POST", body: JSON.stringify({ name: "Bo", invite: rotated.data.invite_code }) });
+ok(oldCode.status === 403 && newCode.status === 200, "a new invite link turns the old one off");
+ok((await fetch(`${BASE}/r/${privRoom.data.room_id}/invite`)).status === 200, "invite page loads");
+
 // Start modes. "manual": nobody acts until the host starts the room.
 const mkRoom = async (start_mode) => {
   const c = await j("/api/rooms", { method: "POST", body: JSON.stringify({ code: CODE, title: `Start mode ${start_mode}`, brief: "Find $x$.", name: "Host", start_mode }) });
