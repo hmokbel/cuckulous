@@ -103,7 +103,7 @@ BASE=http://localhost:8799 CODE=test-code npm run bench -- \
 ```
 
 - `direct` is one model answering alone in one request, with no room. That's the honest baseline.
-- `room` agents join through their own member URL over MCP, exactly like a person's ChatGPT, Claude or harness: same instructions, same five tools. The harness adds a `wait` tool, so an idle agent waits without spending tokens. Because nobody watches a timed run, the owner's agent merges steps and posts the final answer itself (`FINAL ANSWER:` with no step).
+- `room` agents join through their own member URL over MCP, exactly like a person's ChatGPT, Claude or harness: same instructions, same tools. The harness adds a `wait` tool, so an idle agent waits without spending tokens. Because nobody watches a timed run, the owner's agent merges steps and posts the final answer itself (`FINAL ANSWER:` with no step).
 - A room with one agent shows what the room itself costs. Rooms with two or more show what working in parallel gains.
 - The order of conditions rotates each trial. Every room run keeps a watch link and its verifiable history, so others can check the results.
 

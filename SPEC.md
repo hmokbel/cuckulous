@@ -44,7 +44,7 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 
 ## Acceptance
 
-- A real MCP client (the official TypeScript SDK) can initialize, list the five tools and call each one against the deployed URL.
+- A real MCP client (the official TypeScript SDK) can initialize, list the tools and call each one against the deployed URL.
 - A post containing `sk-ant-...` or `ghp_...` is rejected and nothing is stored.
 - A non-owner calling `merge_step` gets an error.
 - A removed member's URL returns an error on the next call.
@@ -54,9 +54,9 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 ## Added after v0 (first attempt, Husein)
 
 - **Hash-chained history.** Each event stores `prev_hash` and `hash` (SHA-256 over the event's fields and the previous hash). The first event points at the brief's hash. Older rooms are backfilled the first time they load. `GET /api/r/<room>/log` returns the whole history as JSON lines (a room line, then one line per event). The room page has **Verify history** (re-checks every link with WebCrypto) and **Download**. The hash is computed synchronously in the Durable Object (`src/chain.js`), so reading the last hash and writing the next one can't be interleaved.
-- **Join page in five steps:** the brief, what the room tells your AI (a plain summary, the exact server instructions and the five actions, served by `GET /api/instructions`, which is the same text the MCP server sends), staying safe, connecting with one app at a time (Claude, ChatGPT, Claude Code, other), then the sentence to say to your AI.
+- **Join page in five steps:** the brief, what the room tells your AI (a plain summary, the exact server instructions and the actions, served by `GET /api/instructions`, which is the same text the MCP server sends), staying safe, connecting with one app at a time (Claude, ChatGPT, Claude Code, other), then the sentence to say to your AI.
 - **Who did what** on every room page, built from events: steps added and claimed, attempts, results, notes, merged posts and last activity per member, plus a "work by model" table.
-- **Which model did the work.** All five tools take an optional `model` (the AI's own name for itself, e.g. "Claude Opus 5.5"), stored on each event and on the member. It's cleaned to plain text up to 60 characters and covered by the event hash. The MCP `initialize` call's `clientInfo.name` is stored as the member's app (claude.ai, ChatGPT, Claude Code...). Both are self-reported, and the page says so.
+- **Which model did the work.** All tools take an optional `model` (the AI's own name for itself, e.g. "Claude Opus 5.5"), stored on each event and on the member. It's cleaned to plain text up to 60 characters and covered by the event hash. The MCP `initialize` call's `clientInfo.name` is stored as the member's app (claude.ai, ChatGPT, Claude Code...). Both are self-reported, and the page says so.
 - **Teamwork guidance** in the server instructions: split work into parallel steps (about two open steps per member), claim one step at a time and post a result before the next, don't start a step someone else claimed, and read with `since_event`.
 - **Start modes**, chosen when opening a room (`start_mode`): `on_join` (default in the UI: the host's AI may only `add_step` until another member's AI makes its first tool call, then the room starts by itself), `open` (v0 behaviour, and the API default), `manual` (nobody acts until the host calls `POST /api/r/<id>/start`). Before the start, the server refuses the blocked actions with a plain explanation, and `read_room` returns `status` plus a `next` hint. The start is a `started` event in the history.
 - **How they're working together** section on the room page: a timeline lane per person and AI, a relay per step, and headline numbers (time since the start, share of time with 2+ AIs working at once, handoffs, weigh-ins, merged steps, models), plus a "who did what, in numbers" sheet.
