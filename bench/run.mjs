@@ -194,7 +194,8 @@ async function runRoom(cond, label) {
           results.push({ id: c.id, content: await waitForOthers(agent, seen) });
           continue;
         }
-        const r = await agent.client.callTool({ name: c.name, arguments: c.input });
+        // The harness knows each agent's exact model, so it reports it on every call.
+        const r = await agent.client.callTool({ name: c.name, arguments: { ...c.input, model: agent.model } });
         const text = r.content?.[0]?.text || "";
         if (c.name === "read_room" && r.structuredContent?.last_event_id) seen = r.structuredContent.last_event_id;
         results.push({ id: c.id, content: text, isError: !!r.isError });

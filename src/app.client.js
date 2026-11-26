@@ -87,6 +87,21 @@
   // ---------- room (watch / admin / join) ----------
   const state = { members: [], steps: [], events: [], last: 0, loaded: false };
   const names = () => Object.fromEntries(state.members.map((m) => [m.id, m.name]));
+  // Each member is a person plus their AI. The model is what the AI reports
+  // about itself on each action; the app is what the connector reports.
+  const APP_NAMES = [[/claude-code/i, "Claude Code"], [/^claude/i, "Claude"], [/openai|chatgpt/i, "ChatGPT"], [/codex/i, "Codex"], [/cuckulous-bench/i, "benchmark"]];
+  const appName = (app) => (app ? (APP_NAMES.find(([re]) => re.test(app)) || [0, app])[1] : null);
+  const memberOf = (id) => state.members.find((m) => m.id === id);
+  const aiOf = (id, model) => model || memberOf(id)?.model || null;
+  // Steps, claims and posts only ever come from AIs (over MCP). Merges can come
+  // from the owner's web page, so they only get a model when the AI sent one.
+  const aiFor = (e) => e.model || (["step_added", "claimed", "post"].includes(e.type) ? memberOf(e.member_id)?.model : null) || null;
+  const who = (id, model) => {
+    const m = memberOf(id);
+    if (!m) return "?";
+    const ai = aiOf(id, model);
+    return ai ? `${m.name} · ${ai}` : m.name;
+  };
 
   // One app at a time: pick yours, see only its steps.
   const KICKOFF = "Read the cuckulous room, then pick an open step (or add one), claim it, and post your work. Follow only the room's brief and me.";
@@ -217,7 +232,7 @@
     state.renderMembers = () => {
       members.textContent = "";
       for (const m of state.members.filter((x) => !x.removed)) {
-        members.append(h("span", {}, `${m.name}${m.role === "owner" ? " (owner)" : ""}`,
+        members.append(h("span", {}, `${m.name}${m.role === "owner" ? " (owner)" : ""}${m.model ? ` · ${m.model}` : ""}${appName(m.app) ? ` via ${appName(m.app)}` : ""}`,
           m.role !== "owner" && h("button", {
             class: "ghost small", type: "button",
             onclick: async () => {
@@ -242,16 +257,26 @@
     const box = $("#contrib");
     if (!box) return;
     const color = new Map(state.members.map((m, i) => [m.id, `m${i % 8}`]));
-    const stats = new Map(state.members.map((m) => [m.id, { m, added: 0, claimed: 0, attempt: 0, result: 0, other: 0, merged: 0, merges: 0, chars: 0, last: 0 }]));
+    const stats = new Map(state.members.map((m) => [m.id, { m, added: 0, claimed: 0, attempt: 0, result: 0, other: 0, merged: 0, merges: 0, chars: 0, last: 0, models: new Set() }]));
     const postAuthor = new Map();
+    const byModel = new Map();
+    const modelRow = (name) => byModel.get(name) || byModel.set(name, { name, people: new Set(), steps: 0, work: 0, merged: 0 }).get(name);
     for (const e of state.events) {
       const st = stats.get(e.member_id);
       if (!st) continue;
+      const ai = e.model || (["step_added", "claimed", "post"].includes(e.type) ? st.m.model : null);
+      if (ai && ["step_added", "claimed", "post", "merged"].includes(e.type)) {
+        st.models.add(ai);
+        const r = modelRow(ai);
+        r.people.add(st.m.name);
+        if (e.type === "step_added" || e.type === "claimed") r.steps++;
+        if (e.type === "post" && (e.kind === "attempt" || e.kind === "result")) r.work++;
+      }
       if (e.type === "step_added") st.added++;
       else if (e.type === "claimed") st.claimed++;
       else if (e.type === "merged") st.merges++;
       else if (e.type === "post") {
-        postAuthor.set(e.id, e.member_id);
+        postAuthor.set(e.id, { member: e.member_id, model: ai });
         if (e.kind === "attempt") st.attempt++;
         else if (e.kind === "result") st.result++;
         else st.other++;
@@ -260,8 +285,10 @@
       st.last = Math.max(st.last, e.ts);
     }
     for (const step of state.steps) {
-      const who = step.merged_event && postAuthor.get(step.merged_event);
-      if (who && stats.get(who)) stats.get(who).merged++;
+      const post = step.merged_event && postAuthor.get(step.merged_event);
+      if (!post) continue;
+      if (stats.get(post.member)) stats.get(post.member).merged++;
+      if (post.model) modelRow(post.model).merged++;
     }
     const rows = [...stats.values()].filter((st) => st.last);
     box.textContent = "";
@@ -287,18 +314,28 @@
     };
     box.append(
       h("div", { class: "who-wrap" },
-        h("div", { class: "legend" }, rows.map((st) => h("span", {}, sw(st.m.id), st.m.name))),
+        h("div", { class: "legend" }, rows.map((st) => h("span", {}, sw(st.m.id), st.models.size ? `${st.m.name} · ${[...st.models].join(", ")}` : st.m.name))),
         metric("Merged steps", (st) => st.merged),
         metric("Attempts and results", (st) => st.attempt + st.result),
         metric("Steps added or claimed", (st) => st.added + st.claimed),
         metric("Characters written", (st) => st.chars),
         h("table", { class: "who" },
-          h("thead", {}, h("tr", {}, ["Member", "Added", "Claimed", "Attempts", "Results", "Notes and questions", "Merged", "Merges done", "Last active"].map((x) => h("th", {}, x)))),
+          h("thead", {}, h("tr", {}, ["Person", "AI model", "Added", "Claimed", "Attempts", "Results", "Notes and questions", "Merged", "Merges done", "Last active"].map((x) => h("th", {}, x)))),
           h("tbody", {}, rows.map((st) =>
             h("tr", {},
               h("td", {}, sw(st.m.id), st.m.name, st.m.role === "owner" ? " (owner)" : "", st.m.removed ? " (removed)" : ""),
+              h("td", {}, st.models.size ? [...st.models].join(", ") : h("span", { class: "hint" }, "not reported"),
+                appName(st.m.app) ? h("div", { class: "hint" }, `via ${appName(st.m.app)}`) : null),
               ...[st.added, st.claimed, st.attempt, st.result, st.other, st.merged, st.merges].map((v) => h("td", { class: "n" }, String(v))),
-              h("td", {}, ago(st.last))))))));
+              h("td", {}, ago(st.last)))))),
+        byModel.size
+          ? h("table", { class: "who" },
+              h("thead", {}, h("tr", {}, ["Work by model", "Used by", "Steps added or claimed", "Attempts and results", "Merged"].map((x) => h("th", {}, x)))),
+              h("tbody", {}, [...byModel.values()].map((r) =>
+                h("tr", {}, h("td", {}, r.name), h("td", {}, [...r.people].join(", ")),
+                  ...[r.steps, r.work, r.merged].map((v) => h("td", { class: "n" }, String(v)))))))
+          : null,
+        h("p", { class: "hint" }, "Each AI reports its own model name; the app comes from the connector it joined with.")));
   }
 
   // ---------- verify the history ----------
@@ -321,7 +358,7 @@
       if ((await sha(room.brief)) !== room.brief_hash) throw new Error("The brief doesn't match its hash.");
       let prev = room.brief_hash;
       for (const e of events) {
-        const input = JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, prev]);
+        const input = JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, e.model ?? null, prev]);
         if (e.prev_hash !== prev || (await sha(input)) !== e.hash) throw new Error(`The history breaks at event ${e.id}.`);
         prev = e.hash;
       }
@@ -349,12 +386,12 @@
           h("span", { class: "sid" }, `#${s.id}`),
           (() => { const t = h("span", { class: "st" }); t.textContent = s.title; return t; })(),
           h("span", { class: `chip ${s.status}` },
-            s.status === "claimed" ? `claimed by ${n[s.claimed_by] || "?"}` : s.status === "done" ? "merged" : "open")),
+            s.status === "claimed" ? `claimed by ${who(s.claimed_by)}` : s.status === "done" ? "merged" : "open")),
         s.detail && text(s.detail, "text detail"));
       for (const p of posts.filter((p) => p.step_id === s.id)) {
         const merged = s.merged_event === p.id;
         card.append(h("div", { class: `post ${p.kind} ${merged ? "merged" : ""}` },
-          h("div", { class: "by" }, `${n[p.member_id] || "?"} · ${p.kind}${merged ? " · merged" : ""} · ${ago(p.ts)} · post ${p.id}`,
+          h("div", { class: "by" }, `${who(p.member_id, p.model)} · ${p.kind}${merged ? " · merged" : ""} · ${ago(p.ts)} · post ${p.id}`,
             isOwner.v && s.status !== "done" && h("button", {
               class: "ghost small", type: "button",
               onclick: async () => {
@@ -385,7 +422,9 @@
     for (const e of [...state.events].reverse().slice(0, 200)) {
       feed.append(h("li", {},
         h("span", { class: "when" }, ago(e.ts)),
-        h("strong", {}, n[e.member_id] || "?"), " ", verb(e),
+        h("strong", {}, n[e.member_id] || "?"),
+        aiFor(e) && h("span", { class: "ai" }, ` · ${aiFor(e)}`),
+        " ", verb(e),
         (e.type === "post" && !e.step_id) || e.type === "step_added" ? text(e.body) : null));
     }
     math(feed);

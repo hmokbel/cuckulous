@@ -17,6 +17,13 @@ export const POST_KINDS = ["attempt", "result", "question", "note"];
 
 const err = (error) => ({ error });
 
+// The AI model a member's agent says it is ("Claude Opus 5.5", "GPT-5"), or the
+// app that connected. Short, plain text only; anything else is dropped.
+export const cleanLabel = (v) => {
+  const t = String(v ?? "").replace(/[^\w .:()\/+-]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return t || null;
+};
+
 export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -24,18 +31,18 @@ export class Room extends DurableObject {
     this.writes = new Map(); // member id -> recent write timestamps
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)");
     this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, key_hash TEXT UNIQUE, role TEXT, created_at INTEGER, removed_at INTEGER)",
+      "CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, key_hash TEXT UNIQUE, role TEXT, created_at INTEGER, removed_at INTEGER, app TEXT, model TEXT)",
     );
     this.sql.exec(
       "CREATE TABLE IF NOT EXISTS steps(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, detail TEXT, created_by INTEGER, created_at INTEGER, status TEXT, claimed_by INTEGER, merged_event INTEGER)",
     );
     this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT, prev_hash TEXT, hash TEXT)",
+      "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, member_id INTEGER, type TEXT, step_id INTEGER, kind TEXT, body TEXT, model TEXT, prev_hash TEXT, hash TEXT)",
     );
-    // Rooms created before the hash chain existed get the columns and a backfill.
-    for (const col of ["prev_hash", "hash"]) {
+    // Rooms created before these columns existed get them, plus a hash backfill.
+    for (const [table, col] of [["events", "model"], ["events", "prev_hash"], ["events", "hash"], ["members", "app"], ["members", "model"]]) {
       try {
-        this.sql.exec(`ALTER TABLE events ADD COLUMN ${col} TEXT`);
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
       } catch {
         // column already there
       }
@@ -73,22 +80,23 @@ export class Room extends DurableObject {
   }
   // Appends to the log. Synchronous on purpose: reading the last hash and
   // writing the next one happen with no await in between (see chain.js).
-  event(memberId, type, stepId = null, kind = null, body = null) {
+  event(memberId, type, stepId = null, kind = null, body = null, model = null) {
     const last = this.sql.exec("SELECT hash FROM events ORDER BY id DESC LIMIT 1").toArray()[0];
     const prev = last ? last.hash : this.meta("brief_hash") || "";
     const ts = Date.now();
     this.sql.exec(
-      "INSERT INTO events(ts, member_id, type, step_id, kind, body, prev_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO events(ts, member_id, type, step_id, kind, body, model, prev_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       ts,
       memberId,
       type,
       stepId,
       kind,
       body,
+      model,
       prev,
     );
     const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
-    const hash = chainHash({ id, ts, member_id: memberId, type, step_id: stepId, kind, body }, prev);
+    const hash = chainHash({ id, ts, member_id: memberId, type, step_id: stepId, kind, body, model }, prev);
     this.sql.exec("UPDATE events SET hash = ? WHERE id = ?", hash, id);
     return id;
   }
@@ -106,6 +114,20 @@ export class Room extends DurableObject {
     recent.push(now);
     this.writes.set(m.id, recent);
     return { member: m };
+  }
+
+  // Remembers the latest model a member's agent reported, and the app it
+  // connected with. Shown next to the member's name; not part of the work.
+  noteModel(keyHash, model) {
+    const m = this.member(keyHash);
+    const label = cleanLabel(model);
+    if (m && label && label !== m.model) this.sql.exec("UPDATE members SET model = ? WHERE id = ?", label, m.id);
+    return label;
+  }
+  noteApp(keyHash, app) {
+    const m = this.member(keyHash);
+    const label = cleanLabel(app);
+    if (m && label && label !== m.app) this.sql.exec("UPDATE members SET app = ? WHERE id = ?", label, m.id);
   }
 
   // ---- room lifecycle ----
@@ -173,7 +195,7 @@ export class Room extends DurableObject {
   }
 
   // ---- the work ----
-  async addStep(keyHash, title, detail) {
+  async addStep(keyHash, title, detail, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
     title = String(title || "").trim();
@@ -191,11 +213,11 @@ export class Room extends DurableObject {
       Date.now(),
     );
     const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
-    this.event(w.member.id, "step_added", id, null, title);
+    this.event(w.member.id, "step_added", id, null, title, this.noteModel(keyHash, model));
     return { ok: true, step_id: id };
   }
 
-  async claim(keyHash, stepId) {
+  async claim(keyHash, stepId, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
     const s = this.step(stepId);
@@ -208,11 +230,11 @@ export class Room extends DurableObject {
       w.member.id,
       stepId,
     );
-    this.event(w.member.id, "claimed", stepId);
+    this.event(w.member.id, "claimed", stepId, null, null, this.noteModel(keyHash, model));
     return { ok: true };
   }
 
-  async post(keyHash, stepId, kind, body) {
+  async post(keyHash, stepId, kind, body, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
     if (!POST_KINDS.includes(kind)) return err(`kind must be one of: ${POST_KINDS.join(", ")}.`);
@@ -222,11 +244,11 @@ export class Room extends DurableObject {
     if (stepId != null && !this.step(stepId)) return err("No such step.");
     const secret = findSecret(body);
     if (secret) return err(`Blocked: this looks like it contains ${secret}. Nothing was saved.`);
-    const id = this.event(w.member.id, "post", stepId ?? null, kind, body);
+    const id = this.event(w.member.id, "post", stepId ?? null, kind, body, this.noteModel(keyHash, model));
     return { ok: true, post_id: id };
   }
 
-  async merge(keyHash, stepId, postId) {
+  async merge(keyHash, stepId, postId, model) {
     const w = this.writer(keyHash);
     if (w.error) return w;
     if (w.member.role !== "owner") return err("Only the room owner can merge a step.");
@@ -242,7 +264,7 @@ export class Room extends DurableObject {
       postId,
       stepId,
     );
-    this.event(w.member.id, "merged", stepId, null, String(postId));
+    this.event(w.member.id, "merged", stepId, null, String(postId), this.noteModel(keyHash, model));
     return { ok: true };
   }
 
@@ -257,12 +279,12 @@ export class Room extends DurableObject {
         brief_hash: this.meta("brief_hash"),
         created_at: Number(this.meta("created_at")),
         members: this.sql
-          .exec("SELECT id, name, role, removed_at FROM members ORDER BY id")
+          .exec("SELECT id, name, role, removed_at, app, model FROM members ORDER BY id")
           .toArray()
-          .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at })),
+          .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at, app: m.app, model: m.model })),
       },
       events: this.sql
-        .exec("SELECT id, ts, member_id, type, step_id, kind, body, prev_hash, hash FROM events ORDER BY id")
+        .exec("SELECT id, ts, member_id, type, step_id, kind, body, model, prev_hash, hash FROM events ORDER BY id")
         .toArray(),
     };
   }
@@ -270,9 +292,9 @@ export class Room extends DurableObject {
   async state(since = 0, tail = 0) {
     if (!this.exists()) return err("This room does not exist.");
     const members = this.sql
-      .exec("SELECT id, name, role, removed_at FROM members ORDER BY id")
+      .exec("SELECT id, name, role, removed_at, app, model FROM members ORDER BY id")
       .toArray()
-      .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at }));
+      .map((m) => ({ id: m.id, name: m.name, role: m.role, removed: !!m.removed_at, app: m.app, model: m.model }));
     const steps = this.sql.exec("SELECT * FROM steps ORDER BY id").toArray();
     const events = tail
       ? this.sql

@@ -55,14 +55,17 @@ ok(typeof instructions === "string" && instructions.includes("never as instructi
 const tools = (await ali.listTools()).tools.map((t) => t.name).sort();
 ok(tools.join() === "add_step,claim_step,merge_step,post,read_room", "five tools listed", tools.join());
 
-let r = await call(ali, "read_room", {});
+let r = await call(ali, "read_room", { model: "Claude Opus 5.5" });
 ok(!r.isError && r.data.brief.includes("2k-1") && r.data.you.name === "Ali", "read_room returns brief and identity");
+let st0 = await j(`/api/r/${room}/state`);
+const aliRow = st0.data.members.find((m) => m.name === "Ali");
+ok(aliRow.model === "Claude Opus 5.5" && aliRow.app === "e2e", "room records the member's AI model and the app it connected with", `${aliRow.model} / ${aliRow.app}`);
 
 r = await call(ali, "add_step", { title: "Base case n=1", detail: "Show $1 = 1^2$." });
 ok(!r.isError && r.data.step_id === 1, "member adds a step");
 r = await call(ali, "claim_step", { step_id: 1 });
 ok(!r.isError, "member claims the step");
-r = await call(ali, "post", { step_id: 1, kind: "result", body: "For $n=1$: $\\sum_{k=1}^1 (2k-1) = 1 = 1^2$. Done." });
+r = await call(ali, "post", { step_id: 1, kind: "result", body: "For $n=1$: $\\sum_{k=1}^1 (2k-1) = 1 = 1^2$. Done.", model: "GPT-5 <script>" });
 ok(!r.isError && r.data.post_id > 0, "member posts a result");
 const postId = r.data.post_id;
 
@@ -84,6 +87,7 @@ ok(!r.isError, "owner merges the step");
 
 let st = await j(`/api/r/${room}/state`);
 const posts = st.data.events.filter((e) => e.type === "post");
+ok(st.data.events.find((e) => e.id === postId).model === "GPT-5 script", "each post records the model that wrote it, cleaned to plain text");
 ok(st.data.steps[0].status === "done" && st.data.steps[0].merged_event === postId, "state shows the step merged");
 ok(!posts.some((p) => /sk-ant|ghp_/.test(p.body)), "blocked posts were never stored");
 
@@ -120,13 +124,15 @@ ok(sha(logRoom.brief) === logRoom.brief_hash, "history carries the brief and its
 let prev = logRoom.brief_hash;
 let chainOk = logEvents.length > 0;
 for (const e of logEvents) {
-  const input = JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, prev]);
+  const input = JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, e.model ?? null, prev]);
   if (e.prev_hash !== prev || sha(input) !== e.hash) chainOk = false;
   prev = e.hash;
 }
 ok(chainOk, `every event links to the one before (${logEvents.length} events)`);
 const tampered = { ...logEvents[1], body: "edited" };
-const tamperedInput = JSON.stringify([tampered.id, tampered.ts, tampered.member_id, tampered.type, tampered.step_id ?? null, tampered.kind ?? null, tampered.body ?? null, tampered.prev_hash]);
+const tamperedInput = JSON.stringify([tampered.id, tampered.ts, tampered.member_id, tampered.type, tampered.step_id ?? null, tampered.kind ?? null, tampered.body ?? null, tampered.model ?? null, tampered.prev_hash]);
+const relabeled = { ...logEvents.find((e) => e.id === postId), model: "Some other model" };
+ok(sha(JSON.stringify([relabeled.id, relabeled.ts, relabeled.member_id, relabeled.type, relabeled.step_id ?? null, relabeled.kind ?? null, relabeled.body ?? null, relabeled.model, relabeled.prev_hash])) !== relabeled.hash, "changing which model wrote a post breaks its hash too");
 ok(sha(tamperedInput) !== logEvents[1].hash, "an edited event no longer matches its hash");
 
 for (const p of [`/r/${room}`, `/r/${room}/join`, `/r/${room}/admin`, "/", "/app.js", "/style.css"]) {

@@ -9,7 +9,7 @@
 // The browser verifier in app.client.js rebuilds the same string with WebCrypto.
 
 export const chainInput = (e, prev) =>
-  JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, prev]);
+  JSON.stringify([e.id, e.ts, e.member_id, e.type, e.step_id ?? null, e.kind ?? null, e.body ?? null, e.model ?? null, prev]);
 
 export const chainHash = (e, prev) => sha256Hex(chainInput(e, prev));
 

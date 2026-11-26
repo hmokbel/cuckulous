@@ -164,5 +164,6 @@ table.who td.n{text-align:right;font-variant-numeric:tabular-nums}
 .feed-tools{display:flex;gap:10px;align-items:center}
 .small-link{font-size:12px;color:var(--mute)}
 .ok-text{color:var(--ok)}.bad-text{color:#c92a2a}
+.ai{color:var(--mute);font-weight:500}
 @media(max-width:860px){.metric{grid-template-columns:1fr;gap:3px}}
 `;
