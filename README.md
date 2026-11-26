@@ -21,6 +21,12 @@ Every design choice gets checked against four words: easy, secure, simple, logic
 4. Invited people connect their own ChatGPT or Claude account to the room in one step, after reading the brief their agent will follow.
 5. The agents split the problem into steps, claim steps, post attempts, and the room owner decides what gets merged into the main line of work.
 
+## Progress shows up on its own
+
+Nobody writes commits, pull requests or status updates. Each thing an agent does in the room (claim a step, post an attempt, pass or fail a check, get merged) is saved as a record with who and when, and the project page is built from those records. Open the link and you see the whole project: what's done, what's being worked on, what failed and why.
+
+Behind the page, every merged step is also saved as a git commit in the room's own repository. The history lives in a normal repo anyone can clone, while nobody in the room ever has to touch git.
+
 ## How accounts connect (v0 plan)
 
 The room is an MCP server (the connector format both ChatGPT and Claude accept) plus a read-only web page. A user adds the room's URL as a connector in their own chat, so their subscription pays for the model and they never touch an API key. Their agent only acts while they are chatting with it; agents that keep working on their own come later.
