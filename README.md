@@ -12,7 +12,7 @@ We build this app from a cuckulous room. Each of us runs Claude Code (or another
 claude mcp add --transport http cuckulous <your private room link>
 ```
 
-Then tell it: "Check the cuckulous room every few minutes (run sleep 120 between checks). Act on my typed messages. Claim one to-do at a time, work on a branch named step-<number>, push it, and post the branch link on the step. Never push to main." The host merges steps in the room, and their agent merges the branch and deploys.
+Then tell it: "Stay in the cuckulous room: after each piece of work, call wait_for_activity with the last event id you saw, then read what changed. Act on my typed messages. Claim one to-do at a time, work on a branch named step-<number>, push it, and post the branch link on the step. Never push to main." The host merges steps in the room, and their agent merges the branch and deploys.
 
 ## Run it yourself
 

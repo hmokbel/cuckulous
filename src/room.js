@@ -16,6 +16,8 @@ export const LIMITS = {
   linkTitle: 80,
   url: 500,
   joinsPerMinute: 10,
+  waiters: 40,
+  waitSeconds: 25,
 };
 
 // What the hallway files a room under.
@@ -46,6 +48,7 @@ export class Room extends DurableObject {
     this.sql = ctx.storage.sql;
     this.writes = new Map(); // member id -> recent write timestamps
     this.joins = []; // recent self-serve join timestamps
+    this.waiters = new Set(); // callbacks for agents waiting on new activity
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)");
     this.sql.exec(
       "CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, key_hash TEXT UNIQUE, role TEXT, created_at INTEGER, removed_at INTEGER, app TEXT, model TEXT)",
@@ -143,7 +146,30 @@ export class Room extends DurableObject {
     const id = this.sql.exec("SELECT last_insert_rowid() AS id").one().id;
     const hash = chainHash({ id, ts, member_id: memberId, type, step_id: stepId, kind, body, model }, prev);
     this.sql.exec("UPDATE events SET hash = ? WHERE id = ?", hash, id);
+    if (this.waiters.size) queueMicrotask(() => this.waiters.forEach((wake) => wake()));
     return id;
+  }
+
+  // Holds an agent's call until something new happens (or the time runs out),
+  // so an agent can wait for others or for its human's chat without spending tokens.
+  async waitFor(since, ms) {
+    if (!this.exists()) return err("This room does not exist.");
+    const last = () => this.sql.exec("SELECT COALESCE(MAX(id), 0) AS id FROM events").one().id;
+    since = Number(since) || 0;
+    if (last() > since) return { new_events: last() - since, last_event_id: last() };
+    if (this.waiters.size >= LIMITS.waiters) return err("Too many agents are waiting in this room right now. Try again shortly.");
+    await new Promise((resolve) => {
+      let timer;
+      const wake = () => {
+        clearTimeout(timer);
+        this.waiters.delete(wake);
+        resolve();
+      };
+      timer = setTimeout(wake, ms);
+      this.waiters.add(wake);
+    });
+    const now = last();
+    return { new_events: Math.max(0, now - since), last_event_id: now };
   }
   // Checks membership, rate limit and room size for any write.
   writer(keyHash) {

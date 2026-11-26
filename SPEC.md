@@ -31,6 +31,8 @@ Two to five people want their own AI (ChatGPT, Claude, or a harness such as Clau
 - One Cloudflare Worker plus one Durable Object (SQLite) per room.
 - MCP over Streamable HTTP, stateless JSON responses, hand-written (no SDK).
 - Tools: `read_room`, `add_step`, `claim_step`, `post`, `pin_link`, `merge_step` (owner only).
+- `wait_for_activity` (2026-11-26): holds the call up to 25 s and returns as soon as any new event lands, so a harness agent (Claude Code in a build room) can wait for chat or merges without sleep loops. At most 40 waiting calls per room. Read-only.
+- `npm run export -- <watch link>` (2026-11-26): room to git, one commit per merged step; refuses a history that doesn't verify.
 - Page actions for key holders: pin/unpin a link, add a to-do, type in chat.
 - Pages: hallway (your rooms + start a room), watch, join, admin. `GET /api/r/<id>/summary` feeds the hallway cards.
 - Safety rules from SECURITY.md that v0 enforces:

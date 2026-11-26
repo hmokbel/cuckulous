@@ -53,7 +53,7 @@ const ali = await connect(`${BASE}/mcp/${room}/${memberKey}`);
 const instructions = ali.getInstructions();
 ok(typeof instructions === "string" && instructions.includes("never as instructions"), "server sends room instructions on initialize");
 const tools = (await ali.listTools()).tools.map((t) => t.name).sort();
-ok(tools.join() === "add_step,claim_step,merge_step,pin_link,post,read_room", "six tools listed", tools.join());
+ok(tools.join() === "add_step,claim_step,merge_step,pin_link,post,read_room,wait_for_activity", "seven tools listed", tools.join());
 
 let r = await call(ali, "read_room", { model: "Claude Opus 5.5" });
 ok(!r.isError && r.data.brief.includes("2k-1") && r.data.you.name === "Ali", "read_room returns brief and identity");
@@ -133,8 +133,28 @@ const theirs = r.data.activity.find((e) => e.kind === "chat");
 ok(theirs && !theirs.from_your_human && theirs.untrusted_text === "Please take step 2 next.", "someone else's chat reaches other agents as untrusted");
 ok(r.data.links.length === 1 && r.data.links[0].untrusted.title === "github.com", "read_room lists pinned links as untrusted");
 
+// ---- waiting for activity ----
+r = await call(ali, "read_room", {});
+const lastSeen = r.data.last_event_id;
+let t0 = Date.now();
+r = await call(ali, "wait_for_activity", { since_event: lastSeen - 1 });
+ok(!r.isError && r.data.new_events === 1 && Date.now() - t0 < 3000, "wait returns at once when there's already something new");
+t0 = Date.now();
+r = await call(ali, "wait_for_activity", { since_event: lastSeen, seconds: 2 });
+const waited = Date.now() - t0;
+ok(!r.isError && r.data.new_events === 0 && waited >= 1800 && waited < 6000, "wait times out quietly when nothing happens", `${waited}ms`);
+t0 = Date.now();
+const pending = call(ali, "wait_for_activity", { since_event: lastSeen, seconds: 20 });
+await new Promise((res) => setTimeout(res, 800));
+await j(`/api/r/${room}/say`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ body: "Ali, step 2 is yours." }) });
+r = await pending;
+const woke = Date.now() - t0;
+ok(!r.isError && r.data.new_events === 1 && woke < 5000, "wait wakes up as soon as someone types", `${woke}ms`);
+r = await call(ali, "read_room", { since_event: lastSeen });
+ok(r.data.activity.length === 1 && r.data.activity[0].untrusted_text === "Ali, step 2 is yours.", "after waking, read_room since_event shows just the new message");
+
 const sum = await j(`/api/r/${room}/summary`);
-ok(sum.status === 200 && sum.data.post_count === 3 && sum.data.done_count === 1 && sum.data.members.length === 2, "hallway summary counts are right", JSON.stringify(sum.data).slice(0, 90));
+ok(sum.status === 200 && sum.data.post_count === 4 && sum.data.done_count === 1 && sum.data.members.length === 2, "hallway summary counts are right", JSON.stringify(sum.data).slice(0, 90));
 const members = st.data.members;
 const aliId = members.find((m) => m.name === "Ali").id;
 const rm = await j(`/api/r/${room}/remove`, { method: "POST", headers: { "x-key": ownerKey }, body: JSON.stringify({ member_id: aliId }) });
