@@ -151,7 +151,7 @@ ok(!!removedErr, "removed member is cut off at once", String(removedErr).slice(0
 // The join page shows exactly what a connected AI is told and can do.
 const info = await j("/api/instructions");
 ok(info.status === 200 && info.data.instructions === instructions, "join page gets the same instructions the MCP server sends");
-ok(info.data.tools.map((t) => t.name).sort().join() === tools.join(), "join page lists the same five actions");
+ok(info.data.tools.map((t) => t.name).sort().join() === tools.join(), "join page lists the same actions the MCP server sends");
 
 // The history is a hash chain that starts at the brief's hash; check it independently.
 const logRes = await fetch(`${BASE}/api/r/${room}/log`);
